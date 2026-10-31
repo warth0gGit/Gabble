@@ -1,12 +1,13 @@
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, dictation, lexicon, calls, filing, permissions
+    case home, general, dictation, lexicon, calls, filing, permissions
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .home: return "Home"
         case .general: return "General"
         case .dictation: return "Dictation"
         case .lexicon: return "Word List"
@@ -18,6 +19,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .home: return "house"
         case .general: return "gearshape"
         case .dictation: return "mic"
         case .lexicon: return "character.book.closed"
@@ -30,9 +32,20 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
 struct MainWindow: View {
     @EnvironmentObject private var permissions: PermissionsManager
-    @State private var selection: SettingsSection? = .general
+    @State private var selection: SettingsSection? = .home
 
     var body: some View {
+        VStack(spacing: 0) {
+            BrandHeader()
+            splitView
+        }
+        .onAppear { permissions.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            permissions.refresh()
+        }
+    }
+
+    private var splitView: some View {
         NavigationSplitView {
             List(SettingsSection.allCases, selection: $selection) { section in
                 Label(section.title, systemImage: section.icon)
@@ -41,7 +54,8 @@ struct MainWindow: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
-            switch selection ?? .general {
+            switch selection ?? .home {
+            case .home: HomeView(onOpen: { selection = $0 })
             case .general: GeneralView(onShowPermissions: { selection = .permissions })
             case .dictation: DictationView()
             case .lexicon: LexiconView()
@@ -49,13 +63,6 @@ struct MainWindow: View {
             case .filing: FilingView()
             case .permissions: PermissionsView()
             }
-        }
-        .onAppear {
-            permissions.refresh()
-            if !permissions.allRequiredGranted { selection = .permissions }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            permissions.refresh()
         }
     }
 }
