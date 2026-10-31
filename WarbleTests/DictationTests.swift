@@ -84,3 +84,29 @@ final class JargonTests: XCTestCase {
         XCTAssertFalse(LexiconLearner.looksLikeJargon("went", isKnownWord: known))
     }
 }
+
+final class LiveJoinerTests: XCTestCase {
+    func testFirstPhraseIsCapitalisedWithNoLeadingSpace() {
+        XCTAssertEqual(LiveJoiner.piece(for: "um hello there", after: ""), "Hello there")
+    }
+
+    func testContinuingPhraseGetsSpaceAndLowerCase() {
+        XCTAssertEqual(LiveJoiner.piece(for: "and then we left", after: "We arrived"), " and then we left")
+    }
+
+    func testNewSentenceKeepsCapital() {
+        XCTAssertEqual(LiveJoiner.piece(for: "next point", after: "That's done."), " Next point")
+    }
+
+    func testKeepsAcronymsAndI() {
+        XCTAssertEqual(LiveJoiner.piece(for: "KPI review", after: "We need the"), " KPI review")
+        XCTAssertEqual(LiveJoiner.piece(for: "I think so", after: "Well"), " I think so")
+    }
+}
+
+final class TextInserterTests: XCTestCase {
+    @MainActor
+    func testNormalisesQuotesAndLineEndings() {
+        XCTAssertEqual(TextInserter.normalised("It\u{2019}s\r\nfine"), "It's\nfine")
+    }
+}

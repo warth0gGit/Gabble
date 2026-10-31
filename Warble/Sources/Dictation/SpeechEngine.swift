@@ -23,6 +23,8 @@ enum SpeechEngineError: LocalizedError {
 final class SpeechEngine {
     /// Called with the full text heard so far (final + in-progress words).
     var onPartial: ((String) -> Void)?
+    /// Called with each finished phrase as soon as the engine is sure of it.
+    var onFinalSegment: ((String) -> Void)?
     /// Called with microphone loudness from 0 to 1.
     var onLevel: ((Double) -> Void)?
     /// Called while the speech model downloads for the first time.
@@ -81,6 +83,8 @@ final class SpeechEngine {
                     if result.isFinal {
                         self.finalText = Self.join(self.finalText, text)
                         self.volatileText = ""
+                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty { self.onFinalSegment?(trimmed) }
                     } else {
                         self.volatileText = text
                     }

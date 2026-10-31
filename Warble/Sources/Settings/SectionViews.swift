@@ -59,6 +59,12 @@ struct DictationView: View {
                     Label("**Tap** the key once to keep listening hands-free. Tap again to finish.", systemImage: "hand.tap")
                 }
                 .font(.callout)
+                Toggle("Show words as I speak", isOn: $appState.liveTyping)
+                Text(appState.liveTyping
+                     ? "Words appear in the text box phrase by phrase while you talk, then get tidied up when you finish."
+                     : "Your words appear all at once, already tidied, when you finish.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 if appState.dictationKey == .fn {
                     Text("Tip: if pressing Fn opens the emoji picker or Apple's own dictation, go to System Settings → Keyboard and set \"Press 🌐 key to\" to \"Do Nothing\".")
                         .font(.callout)

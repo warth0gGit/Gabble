@@ -31,6 +31,80 @@ enum TextInserter {
         }
     }
 
+    /// Types text straight into the focused app, without touching the clipboard.
+    /// Used to show words live while you are still speaking.
+    static func type(_ text: String) {
+        guard !text.isEmpty else { return }
+        let source = CGEventSource(stateID: .hidSystemState)
+        let units = Array(text.utf16)
+        var index = 0
+        while index < units.count {
+            let end = min(index + 16, units.count)
+            var chunk = Array(units[index..<end])
+            for keyDown in [true, false] {
+                guard let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: keyDown) else { continue }
+                event.flags = []
+                event.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+                event.post(tap: .cghidEventTap)
+            }
+            index = end
+        }
+    }
+
+    /// Replaces text Warble just typed (immediately before the cursor) with a
+    /// tidied version. Only does it when the app lets Warble confirm the text
+    /// is really there, so it can never delete anything you typed yourself.
+    /// Returns false if the replacement was skipped.
+    @discardableResult
+    static func replaceTyped(_ typed: String, with replacement: String) -> Bool {
+        guard typed != replacement, !typed.isEmpty, !replacement.isEmpty,
+              textBeforeCursorEnds(with: typed) else { return false }
+        let source = CGEventSource(stateID: .hidSystemState)
+        let count = typed.count
+        for _ in 0..<count {
+            for keyDown in [true, false] {
+                let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_LeftArrow), keyDown: keyDown)
+                event?.flags = .maskShift
+                event?.post(tap: .cghidEventTap)
+            }
+        }
+        insert(replacement)
+        return true
+    }
+
+    /// Checks, via Accessibility, that the focused text field has `text` right before the cursor.
+    static func textBeforeCursorEnds(with text: String) -> Bool {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
+        let element = focused as! AXUIElement
+        var value: CFTypeRef?
+        var rangeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
+              let full = value as? String,
+              AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,
+              let rangeValue, CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return false }
+        var range = CFRange()
+        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range), range.length == 0 else { return false }
+        let ns = full as NSString
+        guard range.location >= 0, range.location <= ns.length else { return false }
+        let before = ns.substring(to: range.location)
+        return normalised(before).hasSuffix(normalised(text))
+    }
+
+    /// Smooths over small changes apps make while you type (curly quotes, line endings).
+    static func normalised(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\u{2028}", with: "\n")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+    }
+
     private static func sendPaste() {
         let source = CGEventSource(stateID: .combinedSessionState)
         let key = CGKeyCode(kVK_ANSI_V)

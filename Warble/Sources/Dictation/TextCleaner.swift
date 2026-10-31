@@ -119,3 +119,29 @@ enum TextCleaner {
         return result
     }
 }
+
+/// Joins phrases that are typed live, one at a time, into a natural sentence flow.
+enum LiveJoiner {
+    /// Returns the text to type for `phrase`, given everything typed so far in
+    /// this dictation: a leading space when needed, and a lower-case start when
+    /// the previous phrase didn't end a sentence.
+    static func piece(for phrase: String, after typed: String,
+                      replacements: [TextCleaner.Replacement] = []) -> String {
+        var text = TextCleaner.clean(phrase, replacements: replacements)
+        guard !text.isEmpty else { return "" }
+        guard let last = typed.last else { return text }
+        let endsSentence = ".!?\n".contains(last)
+        if !endsSentence, let first = text.first, first.isUppercase {
+            let firstWord = text.prefix { !$0.isWhitespace && !$0.isPunctuation }
+            let keepCapital = firstWord == "I" || firstWord.count > 1 && firstWord.allSatisfy { $0.isUppercase || $0.isNumber }
+                || replacements.contains { $0.written.hasPrefix(String(firstWord)) }
+            if !keepCapital {
+                text = first.lowercased() + text.dropFirst()
+            }
+        }
+        if last.isWhitespace || text.first == "\n" || text.first.map({ ",.;:!?".contains($0) }) == true {
+            return text
+        }
+        return " " + text
+    }
+}

@@ -32,6 +32,9 @@ final class DictationController: ObservableObject {
     private var pressedAt: Date?
     private var targetBundleID: String?
     private var cancellables: Set<AnyCancellable> = []
+    /// Text typed live into the app during the current dictation.
+    private var typedSoFar = ""
+    private var isLiveTyping = false
 
     /// A press shorter than this starts hands-free mode instead of push-to-talk.
     private let tapThreshold: TimeInterval = 0.35
@@ -42,6 +45,7 @@ final class DictationController: ObservableObject {
 
         engine.onPartial = { [weak self] text in self?.liveText = text }
         engine.onLevel = { [weak self] level in self?.level = level }
+        engine.onFinalSegment = { [weak self] phrase in self?.typeLive(phrase) }
         engine.onPreparing = { [weak self] message in self?.phase = .preparing(message) }
 
         hotkey.onPress = { [weak self] in self?.keyPressed() }
@@ -116,6 +120,8 @@ final class DictationController: ObservableObject {
         liveText = ""
         isHandsFree = handsFree
         targetBundleID = TextInserter.frontmostBundleID
+        typedSoFar = ""
+        isLiveTyping = appState.liveTyping && testSink == nil
         phase = .preparing("Starting…")
         do {
             try await engine.start(hints: lexicon.recognitionHints)
@@ -142,12 +148,37 @@ final class DictationController: ObservableObject {
             return
         }
         let cleaned = await cleanUp(raw)
+
+        if isLiveTyping && !typedSoFar.isEmpty {
+            // Words are already in the field; swap in the tidied version if it differs.
+            isLiveTyping = false
+            let typed = typedSoFar
+            phase = .idle
+            try? await Task.sleep(for: .milliseconds(300))
+            let replaced = TextInserter.replaceTyped(typed, with: cleaned)
+            let inField = replaced ? cleaned : typed
+            lastResult = inField
+            watchForCorrections(inField)
+            return
+        }
+
+        isLiveTyping = false
         lastResult = cleaned
         phase = .idle
         deliver(cleaned)
     }
 
+    /// Types each phrase into the app as soon as it's recognised.
+    private func typeLive(_ phrase: String) {
+        guard isLiveTyping else { return }
+        let piece = LiveJoiner.piece(for: phrase, after: typedSoFar, replacements: lexicon.replacements)
+        guard !piece.isEmpty else { return }
+        TextInserter.type(piece)
+        typedSoFar += piece
+    }
+
     func cancel() async {
+        isLiveTyping = false
         await engine.cancel()
         startedAt = nil
         isHandsFree = false
@@ -174,6 +205,10 @@ final class DictationController: ObservableObject {
             return
         }
         TextInserter.insert(text)
+        watchForCorrections(text)
+    }
+
+    private func watchForCorrections(_ text: String) {
         correctionWatcher.watch(inserted: text) { [weak self] original, edited in
             self?.lexicon.learnFromCorrection(original: original, edited: edited)
         }
