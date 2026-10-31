@@ -20,7 +20,7 @@ struct GeneralView: View {
             if !permissions.allRequiredGranted {
                 Section {
                     HStack {
-                        Label("Gabble still needs some permissions.", systemImage: "exclamationmark.triangle.fill")
+                        Label("Warble still needs some permissions.", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                         Spacer()
                         Button("Set up", action: onShowPermissions)
@@ -29,7 +29,7 @@ struct GeneralView: View {
             }
             Section("About") {
                 LabeledContent("Version", value: Bundle.main.versionString)
-                Text("Everything Gabble hears stays on this Mac.")
+                Text("Everything Warble hears stays on this Mac.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -159,7 +159,7 @@ struct LexiconView: View {
     var body: some View {
         Form {
             Section {
-                Text("Gabble learns your acronyms and jargon automatically: when you correct a word it typed, and from words that keep appearing in your calls. You can also add them yourself below.")
+                Text("Warble learns your acronyms and jargon automatically: when you correct a word it typed, and from words that keep appearing in your calls. You can also add them yourself below.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -334,7 +334,7 @@ struct PermissionsView: View {
     var body: some View {
         Form {
             Section {
-                Text("Gabble needs a few permissions from macOS. Click each button, then switch Gabble on in the window that opens. Come back here when you're done.")
+                Text("Warble needs a few permissions from macOS. Click each button, then switch Warble on in the window that opens. Come back here when you're done.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -358,7 +358,7 @@ struct PermissionsView: View {
                             EmptyView()
                         case .needsRelaunch:
                             VStack(alignment: .trailing) {
-                                Button("Reopen Gabble") { relaunch() }
+                                Button("Reopen Warble") { relaunch() }
                                 Button("Open Settings") { permissions.openSettings(for: kind) }
                                     .buttonStyle(.link)
                             }

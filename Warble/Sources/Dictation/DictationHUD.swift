@@ -54,8 +54,8 @@ struct DictationHUDView: View {
                     .truncationMode(.head)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(GabbleColor.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(GabbleColor.line, lineWidth: 1))
+                    .background(WarbleColor.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WarbleColor.line, lineWidth: 1))
                     .frame(maxWidth: 400)
             }
             capsule
@@ -66,22 +66,22 @@ struct DictationHUDView: View {
     private var capsule: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(controller.phase == .listening ? GabbleColor.green : GabbleColor.idle)
+                .fill(controller.phase == .listening ? WarbleColor.green : WarbleColor.idle)
                 .frame(width: 8, height: 8)
-                .shadow(color: GabbleColor.glow.opacity(controller.phase == .listening ? 0.8 : 0), radius: 4)
+                .shadow(color: WarbleColor.glow.opacity(controller.phase == .listening ? 0.8 : 0), radius: 4)
             WaveformRibbon(level: controller.level, isActive: controller.phase == .listening, strands: 8)
                 .frame(width: 120, height: 26)
             statusText
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(GabbleColor.idle)
+                .foregroundStyle(WarbleColor.idle)
                 .frame(minWidth: 40, alignment: .leading)
         }
         .padding(.leading, 10)
         .padding(.trailing, 14)
         .padding(.vertical, 6)
-        .background(GabbleColor.background.opacity(0.94), in: Capsule())
-        .overlay(Capsule().strokeBorder(GabbleColor.green.opacity(controller.phase == .listening ? 0.3 : 0.15), lineWidth: 1))
-        .shadow(color: GabbleColor.green.opacity(controller.phase == .listening ? 0.22 : 0), radius: 14)
+        .background(WarbleColor.background.opacity(0.94), in: Capsule())
+        .overlay(Capsule().strokeBorder(WarbleColor.green.opacity(controller.phase == .listening ? 0.3 : 0.15), lineWidth: 1))
+        .shadow(color: WarbleColor.green.opacity(controller.phase == .listening ? 0.22 : 0), radius: 14)
         .environment(\.colorScheme, .dark)
     }
 

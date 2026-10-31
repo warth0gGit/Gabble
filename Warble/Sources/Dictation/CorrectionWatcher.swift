@@ -1,11 +1,11 @@
 import AppKit
 import ApplicationServices
 
-/// Works out what the user changed inside text Gabble typed. Pure and tested.
+/// Works out what the user changed inside text Warble typed. Pure and tested.
 enum CorrectionDiff {
-    /// Given the field's text right after Gabble typed `inserted` (`before`) and
+    /// Given the field's text right after Warble typed `inserted` (`before`) and
     /// a little later (`after`), returns the user's edited version of `inserted`,
-    /// or nil if the change wasn't inside Gabble's text.
+    /// or nil if the change wasn't inside Warble's text.
     static func editedVersion(of inserted: String, before: String, after: String) -> String? {
         guard before != after, !inserted.isEmpty,
               let insertedRange = before.range(of: inserted, options: .backwards) else { return nil }
@@ -22,7 +22,7 @@ enum CorrectionDiff {
         let insStart = before.distance(from: before.startIndex, to: insertedRange.lowerBound)
         let insEnd = before.distance(from: before.startIndex, to: insertedRange.upperBound)
         guard changeStart >= insStart, changeEnd <= insEnd, changeStart < insEnd else { return nil }
-        // Typing straight before or after Gabble's text is not a correction of it.
+        // Typing straight before or after Warble's text is not a correction of it.
         if changeStart == changeEnd, changeStart == insStart || changeStart == insEnd { return nil }
 
         let replacement = String(a[prefix..<(a.count - suffix)])
@@ -32,7 +32,7 @@ enum CorrectionDiff {
     }
 }
 
-/// After Gabble types something, quietly checks the same text field a few
+/// After Warble types something, quietly checks the same text field a few
 /// seconds later to see whether the user fixed a word, so it can learn it.
 @MainActor
 final class CorrectionWatcher {

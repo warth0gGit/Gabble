@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Gabble's colours. Black backgrounds and one green, which only appears
+/// Warble's colours. Black backgrounds and one green, which only appears
 /// when the app is doing something or there is something to act on.
-enum GabbleColor {
+enum WarbleColor {
     /// Night: window and pop-up backgrounds.
     static let background = Color(red: 0x0A / 255, green: 0x0C / 255, blue: 0x0B / 255)
     /// Surface: cards and grouped settings.
@@ -18,10 +18,10 @@ enum GabbleColor {
 }
 
 extension View {
-    /// Applies Gabble's dark look and green accent to a window or panel.
-    func gabbleTheme() -> some View {
+    /// Applies Warble's dark look and green accent to a window or panel.
+    func warbleTheme() -> some View {
         self
             .preferredColorScheme(.dark)
-            .tint(GabbleColor.green)
+            .tint(WarbleColor.green)
     }
 }

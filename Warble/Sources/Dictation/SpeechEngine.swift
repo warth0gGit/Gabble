@@ -11,9 +11,9 @@ enum SpeechEngineError: LocalizedError {
         case .languageNotSupported:
             return "Your Mac's language isn't supported by Apple's on-device speech engine yet."
         case .noAudioFormat:
-            return "Gabble couldn't set up the speech engine's audio format."
+            return "Warble couldn't set up the speech engine's audio format."
         case .microphoneUnavailable:
-            return "Gabble couldn't open the microphone."
+            return "Warble couldn't open the microphone."
         }
     }
 }

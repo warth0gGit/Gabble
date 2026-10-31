@@ -1,9 +1,9 @@
-# Gabble build plan
+# Warble build plan
 
 Agreed with Jonny on 31 Oct 2026. Target: Apple Silicon Mac on macOS 26 (Tahoe). Everything runs on-device.
 
 ## 1. Build pipeline and app shell (done)
-- GitHub Actions builds and tests the app on a cloud Mac and publishes a downloadable `Gabble.zip`.
+- GitHub Actions builds and tests the app on a cloud Mac and publishes a downloadable `Warble.zip`.
 - One app with a full settings window (opened from the Dock) and a menu bar toggle for dictation.
 - Permissions setup page: microphone, speech recognition, accessibility, call audio.
 - Word List (lexicon) storage and learning logic, with a settings page.

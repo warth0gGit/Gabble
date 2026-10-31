@@ -1,4 +1,4 @@
-name: Build Gabble
+name: Build Warble
 
 on:
   push:
@@ -33,8 +33,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild test \
-            -project Gabble.xcodeproj \
-            -scheme Gabble \
+            -project Warble.xcodeproj \
+            -scheme Warble \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY="-" \
             | tee test.log | grep -E "error:|warning: |Test Case|Executed|\*\* TEST" || true
@@ -44,15 +44,15 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build \
-            -project Gabble.xcodeproj \
-            -scheme Gabble \
+            -project Warble.xcodeproj \
+            -scheme Warble \
             -configuration Release \
             -derivedDataPath build \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY="-" \
             | tee build.log | grep -E "error:|\*\* BUILD" || true
           grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
-          ditto -c -k --keepParent build/Build/Products/Release/Gabble.app Gabble.zip
+          ditto -c -k --keepParent build/Build/Products/Release/Warble.app Warble.zip
 
       - name: Upload build log on failure
         if: failure()
@@ -64,8 +64,8 @@ jobs:
       - name: Upload app
         uses: actions/upload-artifact@v4
         with:
-          name: Gabble
-          path: Gabble.zip
+          name: Warble
+          path: Warble.zip
 
       - name: Publish download link
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/project-thread-anfie7')
@@ -73,8 +73,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest-build --yes --cleanup-tag || true
-          gh release create latest-build Gabble.zip \
+          gh release create latest-build Warble.zip \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Gabble latest build" \
-            --notes "Built automatically from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Download Gabble.zip, unzip it and drag Gabble into Applications. See the README for first-launch steps."
+            --title "Warble latest build" \
+            --notes "Built automatically from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Download Warble.zip, unzip it and drag Warble into Applications. See the README for first-launch steps."

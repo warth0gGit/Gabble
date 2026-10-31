@@ -53,11 +53,12 @@ final class AppState: ObservableObject {
     static var defaultMasterFolder: String {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory())
-        return documents.appendingPathComponent("Gabble").path
+        return documents.appendingPathComponent("Warble").path
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        Self.migrateSettingsFromGabble(into: defaults)
         dictationEnabled = defaults.object(forKey: Keys.dictationEnabled) as? Bool ?? true
         recognitionModel = RecognitionModel(rawValue: defaults.string(forKey: Keys.recognitionModel) ?? "")
             ?? .appleOnDevice
@@ -66,6 +67,22 @@ final class AppState: ObservableObject {
         promptForCalls = defaults.object(forKey: Keys.promptForCalls) as? Bool ?? true
         callApps = defaults.stringArray(forKey: Keys.callApps) ?? Self.defaultCallApps
         masterFolderPath = defaults.string(forKey: Keys.masterFolderPath) ?? Self.defaultMasterFolder
+    }
+
+    /// The app was renamed from Gabble to Warble, which changed where macOS keeps
+    /// its settings. Copy the old settings across once.
+    private static func migrateSettingsFromGabble(into defaults: UserDefaults) {
+        guard defaults === UserDefaults.standard,
+              !defaults.bool(forKey: "migratedFromGabble"),
+              let old = UserDefaults(suiteName: "com.warth0g.gabble") else { return }
+        let keys = ["dictationEnabled", "recognitionModel", "cleanupEnabled", "dictationKey",
+                    "promptForCalls", "callApps", "masterFolderPath", "systemAudioRequested"]
+        for key in keys {
+            if let value = old.object(forKey: key), defaults.object(forKey: key) == nil {
+                defaults.set(value, forKey: key)
+            }
+        }
+        defaults.set(true, forKey: "migratedFromGabble")
     }
 
     private enum Keys {

@@ -81,7 +81,7 @@ enum LexiconLearner {
         }
     }
 
-    /// Compares what Gabble typed with what the user changed it to, and returns
+    /// Compares what Warble typed with what the user changed it to, and returns
     /// (heard, corrected) pairs worth remembering, e.g. ("sass", "SaaS").
     static func corrections(original: String, edited: String) -> [(heard: String, corrected: String)] {
         let a = original.split(separator: " ").map(String.init)
@@ -136,9 +136,15 @@ final class LexiconStore: ObservableObject {
         } else {
             let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
                 ?? URL(fileURLWithPath: NSTemporaryDirectory())
-            let folder = support.appendingPathComponent("Gabble", isDirectory: true)
+            let folder = support.appendingPathComponent("Warble", isDirectory: true)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             self.fileURL = folder.appendingPathComponent("lexicon.json")
+            // Bring the word list across from before the app was renamed from Gabble.
+            let oldFile = support.appendingPathComponent("Gabble/lexicon.json")
+            if !FileManager.default.fileExists(atPath: fileURL.path),
+               FileManager.default.fileExists(atPath: oldFile.path) {
+                try? FileManager.default.copyItem(at: oldFile, to: fileURL)
+            }
         }
         load()
     }

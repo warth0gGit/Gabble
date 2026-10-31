@@ -1,5 +1,5 @@
 import XCTest
-@testable import Gabble
+@testable import Warble
 
 final class TextCleanerTests: XCTestCase {
     func testRemovesFillersAndCapitalises() {

@@ -1,5 +1,5 @@
 import XCTest
-@testable import Gabble
+@testable import Warble
 
 final class LexiconLearnerTests: XCTestCase {
     func testFindsAcronymsAndMixedCaseTerms() {

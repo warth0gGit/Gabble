@@ -34,7 +34,7 @@ struct MenuBarIcon: View {
                 let core = 1 - abs(f - 0.5) * 2
                 cg.addPath(RibbonGeometry.path(in: rect, strand: f, time: time, isActive: isActive, amplitude: amplitude))
                 if isActive {
-                    let colour = NSColor(GabbleColor.green).withAlphaComponent(0.6 + 0.4 * core)
+                    let colour = NSColor(WarbleColor.green).withAlphaComponent(0.6 + 0.4 * core)
                     cg.setStrokeColor(colour.cgColor)
                     cg.setLineWidth(core > 0.5 ? 1.5 : 1.1)
                 } else {

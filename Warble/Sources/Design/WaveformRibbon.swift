@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Gabble waveform ribbon: several thin strands that weave around each other.
+/// The Warble waveform ribbon: several thin strands that weave around each other.
 ///
 /// When inactive it is the still "W" from the app icon, in grey.
 /// When active it becomes a moving green wave whose peaks grow with `level`,
@@ -112,9 +112,9 @@ enum RibbonRenderer {
                 let alpha = (small ? 0.55 : 0.2) + 0.5 * core * (small ? 0.6 : 1)
                 let shading = GraphicsContext.Shading.linearGradient(
                     Gradient(stops: [
-                        .init(color: GabbleColor.green.opacity(alpha * 0.5), location: 0),
-                        .init(color: GabbleColor.glow.opacity(min(1, alpha + 0.15)), location: 0.5),
-                        .init(color: GabbleColor.green.opacity(alpha * 0.5), location: 1),
+                        .init(color: WarbleColor.green.opacity(alpha * 0.5), location: 0),
+                        .init(color: WarbleColor.glow.opacity(min(1, alpha + 0.15)), location: 0.5),
+                        .init(color: WarbleColor.green.opacity(alpha * 0.5), location: 1),
                     ]),
                     startPoint: CGPoint(x: rect.minX, y: 0),
                     endPoint: CGPoint(x: rect.maxX, y: 0)
@@ -122,12 +122,12 @@ enum RibbonRenderer {
                 if core > 0.7 {
                     var glow = context
                     glow.addFilter(.blur(radius: max(2, size.height * 0.08)))
-                    glow.stroke(path, with: .color(GabbleColor.green.opacity(0.6)), lineWidth: lineWidth * 2.5)
+                    glow.stroke(path, with: .color(WarbleColor.green.opacity(0.6)), lineWidth: lineWidth * 2.5)
                 }
                 context.stroke(path, with: shading, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
             } else {
                 let alpha = small ? 0.6 : 0.3 + 0.3 * core
-                context.stroke(path, with: .color(GabbleColor.idle.opacity(alpha)), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+                context.stroke(path, with: .color(WarbleColor.idle.opacity(alpha)), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
             }
         }
     }

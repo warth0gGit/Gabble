@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct GabbleApp: App {
+struct WarbleApp: App {
     @StateObject private var appState: AppState
     @StateObject private var permissions = PermissionsManager()
     @StateObject private var lexicon: LexiconStore
@@ -17,15 +17,15 @@ struct GabbleApp: App {
 
     var body: some Scene {
         // The full app window, opened from the Dock.
-        Window("Gabble", id: WindowID.main) {
+        Window("Warble", id: WindowID.main) {
             MainWindow()
                 .environmentObject(appState)
                 .environmentObject(permissions)
                 .environmentObject(lexicon)
                 .environmentObject(dictation)
                 .frame(minWidth: 760, minHeight: 520)
-                .gabbleTheme()
-                .containerBackground(GabbleColor.background, for: .window)
+                .warbleTheme()
+                .containerBackground(WarbleColor.background, for: .window)
         }
         .defaultSize(width: 880, height: 600)
 
@@ -35,7 +35,7 @@ struct GabbleApp: App {
                 .environmentObject(appState)
                 .environmentObject(permissions)
                 .environmentObject(dictation)
-                .gabbleTheme()
+                .warbleTheme()
         } label: {
             MenuBarIcon(isActive: dictation.isActive, enabled: appState.dictationEnabled, level: dictation.level)
         }

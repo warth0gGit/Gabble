@@ -4,7 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import Speech
 
-/// Tracks the macOS permissions Gabble needs and helps the user grant them.
+/// Tracks the macOS permissions Warble needs and helps the user grant them.
 @MainActor
 final class PermissionsManager: ObservableObject {
     enum Status: Equatable {
@@ -15,7 +15,7 @@ final class PermissionsManager: ObservableObject {
             case .granted: return "Allowed"
             case .denied: return "Not allowed"
             case .notAsked: return "Not set up yet"
-            case .needsRelaunch: return "If you've switched Gabble on in System Settings, quit and reopen Gabble to finish."
+            case .needsRelaunch: return "If you've switched Warble on in System Settings, quit and reopen Warble to finish."
             }
         }
     }
@@ -37,13 +37,13 @@ final class PermissionsManager: ObservableObject {
         var explanation: String {
             switch self {
             case .microphone:
-                return "So Gabble can hear you when you dictate or are on a call."
+                return "So Warble can hear you when you dictate or are on a call."
             case .speechRecognition:
-                return "So Gabble can turn speech into text on this Mac. Nothing is sent to the cloud."
+                return "So Warble can turn speech into text on this Mac. Nothing is sent to the cloud."
             case .accessibility:
-                return "So Gabble can type your words into whatever app you are using, like Claude or Word."
+                return "So Warble can type your words into whatever app you are using, like Claude or Word."
             case .systemAudio:
-                return "So Gabble can hear the other people on Teams or Zoom calls. Needed for call transcription."
+                return "So Warble can hear the other people on Teams or Zoom calls. Needed for call transcription."
             }
         }
 
@@ -95,7 +95,7 @@ final class PermissionsManager: ObservableObject {
 
         // Call audio is captured with ScreenCaptureKit, which is covered by the
         // "Screen & System Audio Recording" permission. macOS only reports a new
-        // grant after Gabble is relaunched.
+        // grant after Warble is relaunched.
         if CGPreflightScreenCaptureAccess() {
             updated[.systemAudio] = .granted
         } else {

@@ -13,11 +13,11 @@ struct MenuBarContent: View {
                     .frame(width: 36, height: 24)
                     .opacity(appState.dictationEnabled ? 1 : 0.5)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Gabble")
+                    Text("Warble")
                         .font(.headline)
                     Text(headline)
                         .font(.caption)
-                        .foregroundStyle(dictation.isActive ? GabbleColor.green : GabbleColor.idle)
+                        .foregroundStyle(dictation.isActive ? WarbleColor.green : WarbleColor.idle)
                 }
                 Spacer()
                 Toggle("Dictation", isOn: $appState.dictationEnabled)
@@ -35,7 +35,7 @@ struct MenuBarContent: View {
                     dictation.toggleHandsFree()
                 }
                 .buttonStyle(.borderedProminent)
-                .foregroundStyle(GabbleColor.background)
+                .foregroundStyle(WarbleColor.background)
                 .disabled(dictation.phase == .processing)
             }
 
@@ -70,18 +70,18 @@ struct MenuBarContent: View {
 
             Divider()
 
-            Button("Open Gabble…") {
+            Button("Open Warble…") {
                 openWindow(id: WindowID.main)
                 NSApp.activate()
             }
-            Button("Quit Gabble") {
+            Button("Quit Warble") {
                 NSApp.terminate(nil)
             }
             .keyboardShortcut("q")
         }
         .padding(14)
         .frame(width: 300)
-        .background(GabbleColor.background.opacity(0.6))
+        .background(WarbleColor.background.opacity(0.6))
         .onAppear { permissions.refresh() }
     }
 
