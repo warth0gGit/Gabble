@@ -1,0 +1,80 @@
+name: Build Gabble
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Run tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Gabble.xcodeproj \
+            -scheme Gabble \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            | tee test.log | grep -E "error:|warning: |Test Case|Executed|\*\* TEST" || true
+          grep -q "\*\* TEST SUCCEEDED \*\*" test.log
+
+      - name: Build app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Gabble.xcodeproj \
+            -scheme Gabble \
+            -configuration Release \
+            -derivedDataPath build \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            | tee build.log | grep -E "error:|\*\* BUILD" || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
+          ditto -c -k --keepParent build/Build/Products/Release/Gabble.app Gabble.zip
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: "*.log"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gabble
+          path: Gabble.zip
+
+      - name: Publish download link
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build Gabble.zip \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Gabble latest build" \
+            --notes "Built automatically from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Download Gabble.zip, unzip it and drag Gabble into Applications. See the README for first-launch steps."

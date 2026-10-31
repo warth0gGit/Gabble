@@ -1,0 +1,64 @@
+name: Gabble
+options:
+  bundleIdPrefix: com.warth0g
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+targets:
+  Gabble:
+    type: application
+    platform: macOS
+    sources:
+      - path: Gabble/Sources
+    info:
+      path: Gabble/Info.plist
+      properties:
+        CFBundleDisplayName: Gabble
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        LSMinimumSystemVersion: "26.0"
+        NSMicrophoneUsageDescription: Gabble listens to your microphone so it can turn your speech into text and transcribe calls.
+        NSSpeechRecognitionUsageDescription: Gabble uses on-device speech recognition to transcribe what you say.
+        NSAudioCaptureUsageDescription: Gabble records the other people on your calls so it can transcribe the whole conversation.
+        NSCalendarsFullAccessUsageDescription: Gabble reads meeting attendees and times so it can name speakers and file transcripts automatically.
+    entitlements:
+      path: Gabble/Gabble.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
+        com.apple.security.personal-information.calendars: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.warth0g.gabble
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+  GabbleTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: GabbleTests
+    dependencies:
+      - target: Gabble
+    settings:
+      base:
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Gabble.app/Contents/MacOS/Gabble
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Gabble:
+    build:
+      targets:
+        Gabble: all
+        GabbleTests: [test]
+    test:
+      targets:
+        - GabbleTests
