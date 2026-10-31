@@ -25,6 +25,8 @@ final class SpeechEngine {
     var onPartial: ((String) -> Void)?
     /// Called with each finished phrase as soon as the engine is sure of it.
     var onFinalSegment: ((String) -> Void)?
+    /// Called with the in-progress words of the phrase being spoken right now.
+    var onVolatileSegment: ((String) -> Void)?
     /// Called with microphone loudness from 0 to 1.
     var onLevel: ((Double) -> Void)?
     /// Called while the speech model downloads for the first time.
@@ -51,7 +53,7 @@ final class SpeechEngine {
         let transcriber = SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
-            reportingOptions: [.volatileResults],
+            reportingOptions: [.volatileResults, .fastResults],
             attributeOptions: []
         )
 
@@ -87,6 +89,7 @@ final class SpeechEngine {
                         if !trimmed.isEmpty { self.onFinalSegment?(trimmed) }
                     } else {
                         self.volatileText = text
+                        self.onVolatileSegment?(text)
                     }
                     self.onPartial?(Self.join(self.finalText, self.volatileText))
                 }

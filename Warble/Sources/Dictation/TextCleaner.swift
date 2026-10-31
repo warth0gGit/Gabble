@@ -145,3 +145,76 @@ enum LiveJoiner {
         return " " + text
     }
 }
+
+/// Types words while a phrase is still being spoken, instead of waiting for the
+/// speech engine to finish the phrase. A word is typed once it has stayed the
+/// same in two updates in a row and isn't the last word heard (which may still
+/// be changing). When the phrase is final, the rest is typed, or the phrase is
+/// corrected if the engine changed its mind. Pure, unit tested.
+struct LivePhraseTyper {
+    enum Action: Equatable {
+        case type(String)
+        /// Replace `old` (just before the cursor) with `new`.
+        case replace(old: String, new: String)
+    }
+
+    /// Everything typed before the current phrase.
+    private(set) var typedBefore = ""
+    /// What has been typed for the current phrase.
+    private(set) var phraseTyped = ""
+    private var previousWords: [String] = []
+
+    var typedSoFar: String { typedBefore + phraseTyped }
+
+    /// Handles an in-progress update for the current phrase. Returns text to type now.
+    mutating func volatile(_ text: String, replacements: [TextCleaner.Replacement] = []) -> String {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        defer { previousWords = words }
+        var stable = 0
+        while stable < words.count - 1, stable < previousWords.count,
+              Self.key(words[stable]) == Self.key(previousWords[stable]) {
+            stable += 1
+        }
+        guard stable > 0 else { return "" }
+        let wanted = LiveJoiner.piece(for: words[0..<stable].joined(separator: " "), after: typedBefore,
+                                      replacements: replacements)
+        // Only ever add to the end; never take back what is already typed mid-phrase.
+        guard wanted.hasPrefix(phraseTyped), wanted.count > phraseTyped.count else { return "" }
+        let extra = String(wanted.dropFirst(phraseTyped.count))
+        // Hold back a trailing full stop: the sentence may carry on.
+        let trimmed = extra.hasSuffix(".") ? String(extra.dropLast()) : extra
+        guard !trimmed.isEmpty, !trimmed.allSatisfy(\.isWhitespace) else { return "" }
+        phraseTyped += trimmed
+        return trimmed
+    }
+
+    /// Handles the finished phrase. Returns what to do, or nil if nothing.
+    mutating func final(_ text: String, replacements: [TextCleaner.Replacement] = []) -> Action? {
+        let wanted = LiveJoiner.piece(for: text, after: typedBefore, replacements: replacements)
+        let typed = phraseTyped
+        typedBefore += wanted
+        phraseTyped = ""
+        previousWords = []
+        if wanted == typed { return nil }
+        if !wanted.isEmpty, typed.hasPrefix(wanted) {
+            // The engine finished the phrase earlier than the words already typed;
+            // the extra words belong to the next phrase.
+            phraseTyped = String(typed.dropFirst(wanted.count))
+            previousWords = phraseTyped.split(whereSeparator: \.isWhitespace).map(String.init)
+            return nil
+        }
+        if wanted.hasPrefix(typed) { return .type(String(wanted.dropFirst(typed.count))) }
+        if typed.isEmpty { return wanted.isEmpty ? nil : .type(wanted) }
+        return .replace(old: typed, new: wanted)
+    }
+
+    /// Records that a replacement couldn't be made, so `typed` stayed in the field.
+    mutating func replacementFailed(old: String, new: String) {
+        // Keep the record accurate: the field still has `old`, and nothing of `new`.
+        typedBefore = String(typedBefore.dropLast(new.count)) + old
+    }
+
+    private static func key(_ word: String) -> String {
+        word.lowercased().trimmingCharacters(in: .punctuationCharacters)
+    }
+}

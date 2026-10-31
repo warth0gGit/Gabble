@@ -33,7 +33,8 @@ final class DictationController: ObservableObject {
     private var targetBundleID: String?
     private var cancellables: Set<AnyCancellable> = []
     /// Text typed live into the app during the current dictation.
-    private var typedSoFar = ""
+    private var typer = LivePhraseTyper()
+    private var typedSoFar: String { typer.typedSoFar }
     private var isLiveTyping = false
 
     /// A press shorter than this starts hands-free mode instead of push-to-talk.
@@ -45,7 +46,8 @@ final class DictationController: ObservableObject {
 
         engine.onPartial = { [weak self] text in self?.liveText = text }
         engine.onLevel = { [weak self] level in self?.level = level }
-        engine.onFinalSegment = { [weak self] phrase in self?.typeLive(phrase) }
+        engine.onFinalSegment = { [weak self] phrase in self?.typeFinal(phrase) }
+        engine.onVolatileSegment = { [weak self] words in self?.typeVolatile(words) }
         engine.onPreparing = { [weak self] message in self?.phase = .preparing(message) }
 
         hotkey.onPress = { [weak self] in self?.keyPressed() }
@@ -120,7 +122,7 @@ final class DictationController: ObservableObject {
         liveText = ""
         isHandsFree = handsFree
         targetBundleID = TextInserter.frontmostBundleID
-        typedSoFar = ""
+        typer = LivePhraseTyper()
         isLiveTyping = appState.liveTyping && testSink == nil
         phase = .preparing("Starting…")
         do {
@@ -168,13 +170,26 @@ final class DictationController: ObservableObject {
         deliver(cleaned)
     }
 
-    /// Types each phrase into the app as soon as it's recognised.
-    private func typeLive(_ phrase: String) {
+    /// Types words into the app while you're still speaking.
+    private func typeVolatile(_ words: String) {
         guard isLiveTyping else { return }
-        let piece = LiveJoiner.piece(for: phrase, after: typedSoFar, replacements: lexicon.replacements)
-        guard !piece.isEmpty else { return }
-        TextInserter.type(piece)
-        typedSoFar += piece
+        let piece = typer.volatile(words, replacements: lexicon.replacements)
+        if !piece.isEmpty { TextInserter.type(piece) }
+    }
+
+    /// Finishes off a phrase once the speech engine is sure of it.
+    private func typeFinal(_ phrase: String) {
+        guard isLiveTyping else { return }
+        switch typer.final(phrase, replacements: lexicon.replacements) {
+        case .type(let text)?:
+            TextInserter.type(text)
+        case .replace(let old, let new)?:
+            if !TextInserter.replaceTyped(old, with: new) {
+                typer.replacementFailed(old: old, new: new)
+            }
+        case nil:
+            break
+        }
     }
 
     func cancel() async {

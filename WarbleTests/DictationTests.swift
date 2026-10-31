@@ -110,3 +110,38 @@ final class TextInserterTests: XCTestCase {
         XCTAssertEqual(TextInserter.normalised("It\u{2019}s\r\nfine"), "It's\nfine")
     }
 }
+
+final class LivePhraseTyperTests: XCTestCase {
+    func testTypesStableWordsBeforePhraseEnds() {
+        var t = LivePhraseTyper()
+        XCTAssertEqual(t.volatile("hello"), "")
+        XCTAssertEqual(t.volatile("hello there"), "Hello")
+        XCTAssertEqual(t.volatile("hello there how"), " there")
+        XCTAssertEqual(t.final("hello there how are you"), .type(" how are you"))
+        XCTAssertEqual(t.typedSoFar, "Hello there how are you")
+    }
+
+    func testCorrectsWhenEngineChangesItsMind() {
+        var t = LivePhraseTyper()
+        _ = t.volatile("their going")
+        XCTAssertEqual(t.volatile("their going home"), "Their going")
+        XCTAssertEqual(t.final("they're going home"), .replace(old: "Their going", new: "They're going home"))
+    }
+
+    func testCarriesWordsIntoNextPhrase() {
+        var t = LivePhraseTyper()
+        _ = t.volatile("hello there how")
+        _ = t.volatile("hello there how are")
+        XCTAssertEqual(t.typedSoFar, "Hello there how")
+        XCTAssertNil(t.final("hello there"))
+        XCTAssertEqual(t.volatile("how are you"), "")
+        XCTAssertEqual(t.final("how are you"), .type(" are you"))
+        XCTAssertEqual(t.typedSoFar, "Hello there how are you")
+    }
+
+    func testFinalWithNothingTypedYet() {
+        var t = LivePhraseTyper()
+        XCTAssertEqual(t.final("hi"), .type("Hi"))
+        XCTAssertEqual(t.final("and bye"), .type(" and bye"))
+    }
+}
