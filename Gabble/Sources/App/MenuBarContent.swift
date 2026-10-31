@@ -9,11 +9,16 @@ struct MenuBarContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "waveform")
-                    .font(.title2)
-                    .foregroundStyle(appState.dictationEnabled ? Color.accentColor : .secondary)
-                Text("Gabble")
-                    .font(.headline)
+                WaveformRibbon(level: dictation.level, isActive: dictation.isActive, strands: 5)
+                    .frame(width: 36, height: 24)
+                    .opacity(appState.dictationEnabled ? 1 : 0.5)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Gabble")
+                        .font(.headline)
+                    Text(headline)
+                        .font(.caption)
+                        .foregroundStyle(dictation.isActive ? GabbleColor.green : GabbleColor.idle)
+                }
                 Spacer()
                 Toggle("Dictation", isOn: $appState.dictationEnabled)
                     .toggleStyle(.switch)
@@ -30,6 +35,7 @@ struct MenuBarContent: View {
                     dictation.toggleHandsFree()
                 }
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(GabbleColor.background)
                 .disabled(dictation.phase == .processing)
             }
 
@@ -75,7 +81,13 @@ struct MenuBarContent: View {
         }
         .padding(14)
         .frame(width: 300)
+        .background(GabbleColor.background.opacity(0.6))
         .onAppear { permissions.refresh() }
+    }
+
+    private var headline: String {
+        if dictation.isActive { return "Listening" }
+        return appState.dictationEnabled ? "Ready" : "Dictation is off"
     }
 
     private var statusText: String {

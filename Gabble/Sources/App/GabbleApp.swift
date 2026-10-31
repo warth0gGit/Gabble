@@ -24,6 +24,8 @@ struct GabbleApp: App {
                 .environmentObject(lexicon)
                 .environmentObject(dictation)
                 .frame(minWidth: 760, minHeight: 520)
+                .gabbleTheme()
+                .containerBackground(GabbleColor.background, for: .window)
         }
         .defaultSize(width: 880, height: 600)
 
@@ -33,16 +35,11 @@ struct GabbleApp: App {
                 .environmentObject(appState)
                 .environmentObject(permissions)
                 .environmentObject(dictation)
+                .gabbleTheme()
         } label: {
-            Image(systemName: menuBarSymbol)
-                .accessibilityLabel(dictation.isActive ? "Gabble is listening" : "Gabble")
+            MenuBarIcon(isActive: dictation.isActive, enabled: appState.dictationEnabled, level: dictation.level)
         }
         .menuBarExtraStyle(.window)
-    }
-
-    private var menuBarSymbol: String {
-        if dictation.isActive { return "waveform.circle.fill" }
-        return appState.dictationEnabled ? "waveform" : "waveform.slash"
     }
 }
 
