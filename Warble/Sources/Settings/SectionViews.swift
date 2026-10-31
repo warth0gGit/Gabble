@@ -10,7 +10,7 @@ struct GeneralView: View {
         Form {
             Section {
                 Toggle("Dictation shortcut on", isOn: $appState.dictationEnabled)
-                Text("Hold the \(appState.dictationKey.displayName) to dictate into any app. You can also switch this on and off from the waveform icon in the menu bar.")
+                Text("Hold the \(appState.dictationKey.displayName) to dictate into any app. You can also switch this on and off from the menu bar icon's right-click menu, or just click the icon to start and stop dictating.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
