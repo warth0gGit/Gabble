@@ -9,8 +9,8 @@ struct GeneralView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Dictation", isOn: $appState.dictationEnabled)
-                Text("You can also switch dictation on and off from the waveform icon in the menu bar.")
+                Toggle("Dictation shortcut on", isOn: $appState.dictationEnabled)
+                Text("Hold the \(appState.dictationKey.displayName) to dictate into any app. You can also switch this on and off from the waveform icon in the menu bar.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -41,9 +41,68 @@ struct GeneralView: View {
 
 struct DictationView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var dictation: DictationController
+    @State private var tryText = ""
+    @State private var trying = false
 
     var body: some View {
         Form {
+            Section("How to dictate") {
+                Toggle("Dictation shortcut on", isOn: $appState.dictationEnabled)
+                Picker("Shortcut key", selection: $appState.dictationKey) {
+                    ForEach(DictationKey.allCases) { key in
+                        Text(key.displayName).tag(key)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("**Hold** the key, speak, then let go. Your words appear wherever your cursor is.", systemImage: "hand.point.down")
+                    Label("**Tap** the key once to keep listening hands-free. Tap again to finish.", systemImage: "hand.tap")
+                }
+                .font(.callout)
+                if appState.dictationKey == .fn {
+                    Text("Tip: if pressing Fn opens the emoji picker or Apple's own dictation, go to System Settings → Keyboard and set \"Press 🌐 key to\" to \"Do Nothing\".")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Try it here") {
+                TextEditor(text: $tryText)
+                    .font(.body)
+                    .frame(minHeight: 90)
+                    .overlay(alignment: .topLeading) {
+                        if tryText.isEmpty {
+                            Text("Click Start, say something, then click Stop. Try \"um, let's meet Tuesday, no, Wednesday at ten\".")
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 2)
+                                .padding(.leading, 5)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                HStack {
+                    Button(trying && dictation.isActive ? "Stop" : "Start") {
+                        if trying && dictation.isActive {
+                            Task { await dictation.finish() }
+                        } else {
+                            trying = true
+                            dictation.testSink = { text in
+                                tryText += (tryText.isEmpty ? "" : "\n") + text
+                                trying = false
+                                dictation.testSink = nil
+                            }
+                            Task { await dictation.start(handsFree: true) }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(dictation.phase == .processing)
+                    Button("Clear") { tryText = "" }
+                    Spacer()
+                    if let error = dictation.lastError {
+                        Text(error).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+
             Section("Speech engine") {
                 Picker("Model", selection: $appState.recognitionModel) {
                     ForEach(RecognitionModel.allCases) { model in
@@ -52,19 +111,30 @@ struct DictationView: View {
                             .selectionDisabled(!model.isAvailable)
                     }
                 }
-                Text("All models run on this Mac. Hugging Face models will be downloadable here later.")
+                Text("All models run on this Mac. Your Word List is used to help it hear your jargon correctly.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+
             Section("Cleanup") {
                 Toggle("Tidy up what I say", isOn: $appState.cleanupEnabled)
-                Text("Removes filler words, applies your corrections (\"Tuesday, no, Wednesday\"), adds punctuation and uses your Word List.")
+                Text("Removes filler words, applies your corrections (\"Tuesday, no, Wednesday\"), fixes punctuation, makes lists, uses your Word List and matches the app you're writing in.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if let reason = SmartCleanup.unavailableReason {
+                    Label(reason, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                } else {
+                    Label("Using Apple Intelligence on this Mac.", systemImage: "checkmark.seal.fill")
+                        .font(.callout)
+                        .foregroundStyle(.green)
+                }
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Dictation")
+        .onDisappear { dictation.testSink = nil }
     }
 }
 

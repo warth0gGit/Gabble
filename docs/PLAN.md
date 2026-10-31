@@ -2,13 +2,13 @@
 
 Agreed with Jonny on 31 Oct 2026. Target: Apple Silicon Mac on macOS 26 (Tahoe). Everything runs on-device.
 
-## 1. Build pipeline and app shell (in progress)
+## 1. Build pipeline and app shell (done)
 - GitHub Actions builds and tests the app on a cloud Mac and publishes a downloadable `Gabble.zip`.
 - One app with a full settings window (opened from the Dock) and a menu bar toggle for dictation.
 - Permissions setup page: microphone, speech recognition, accessibility, call audio.
 - Word List (lexicon) storage and learning logic, with a settings page.
 
-## 2. Dictation
+## 2. Dictation (built, in testing)
 - Global shortcut and menu bar toggle; live on-device recognition with Apple's SpeechAnalyzer.
 - Text is typed into the focused app (Claude, Word, chat windows) through the Accessibility API, with a paste fallback.
 - Cleanup to Wispr Flow standard using Apple's on-device Foundation Models: filler removal, mid-sentence corrections, punctuation, lists, tone matched to the app, Word List applied.

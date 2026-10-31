@@ -32,6 +32,9 @@ final class AppState: ObservableObject {
     @Published var recognitionModel: RecognitionModel {
         didSet { defaults.set(recognitionModel.rawValue, forKey: Keys.recognitionModel) }
     }
+    @Published var dictationKey: DictationKey {
+        didSet { defaults.set(dictationKey.rawValue, forKey: Keys.dictationKey) }
+    }
     @Published var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Keys.cleanupEnabled) }
     }
@@ -55,9 +58,10 @@ final class AppState: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        dictationEnabled = defaults.bool(forKey: Keys.dictationEnabled)
+        dictationEnabled = defaults.object(forKey: Keys.dictationEnabled) as? Bool ?? true
         recognitionModel = RecognitionModel(rawValue: defaults.string(forKey: Keys.recognitionModel) ?? "")
             ?? .appleOnDevice
+        dictationKey = DictationKey(rawValue: defaults.string(forKey: Keys.dictationKey) ?? "") ?? .fn
         cleanupEnabled = defaults.object(forKey: Keys.cleanupEnabled) as? Bool ?? true
         promptForCalls = defaults.object(forKey: Keys.promptForCalls) as? Bool ?? true
         callApps = defaults.stringArray(forKey: Keys.callApps) ?? Self.defaultCallApps
@@ -68,6 +72,7 @@ final class AppState: ObservableObject {
         static let dictationEnabled = "dictationEnabled"
         static let recognitionModel = "recognitionModel"
         static let cleanupEnabled = "cleanupEnabled"
+        static let dictationKey = "dictationKey"
         static let promptForCalls = "promptForCalls"
         static let callApps = "callApps"
         static let masterFolderPath = "masterFolderPath"

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// One word or phrase in the user's personal lexicon (acronyms, jargon, names).
@@ -64,6 +65,20 @@ enum LexiconLearner {
         let innerUpper = letters.dropFirst().contains(where: \.isUppercase)
         let hasLower = letters.contains(where: \.isLowercase)
         return innerUpper && hasLower
+    }
+
+    /// Whether a corrected word looks like jargon worth trusting straight away
+    /// (an acronym, a mixed-case name, or a word the dictionary doesn't know),
+    /// rather than an ordinary rewording that should only be suggested.
+    static func looksLikeJargon(_ term: String, isKnownWord: (String) -> Bool) -> Bool {
+        let words = term.split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return false }
+        return words.contains { word in
+            let core = word.trimmingCharacters(in: .punctuationCharacters)
+            guard core.count >= 2 else { return false }
+            if isAcronym(core) || isMixedCase(core) { return true }
+            return !isKnownWord(core.lowercased())
+        }
     }
 
     /// Compares what Gabble typed with what the user changed it to, and returns
@@ -173,10 +188,26 @@ final class LexiconStore: ObservableObject {
         }
     }
 
-    /// Learns from a user's edit of dictated text.
+    /// Replacements applied to every dictation: each mishearing becomes the right spelling.
+    var replacements: [TextCleaner.Replacement] {
+        confirmed.flatMap { entry in
+            entry.soundsLike.map { TextCleaner.Replacement(heard: $0, written: entry.term) }
+        }
+    }
+
+    /// Checks whether a word is in the Mac's dictionary. Replaceable in tests.
+    var isKnownWord: (String) -> Bool = { word in
+        let range = NSSpellChecker.shared.checkSpelling(of: word, startingAt: 0)
+        return range.location == NSNotFound
+    }
+
+    /// Learns from a user's edit of dictated text. Jargon is trusted straight
+    /// away; ordinary rewording is only suggested for the user to approve.
     func learnFromCorrection(original: String, edited: String) {
         for pair in LexiconLearner.corrections(original: original, edited: edited) {
-            add(term: pair.corrected, soundsLike: [pair.heard], source: .correction, state: .confirmed)
+            let jargon = LexiconLearner.looksLikeJargon(pair.corrected, isKnownWord: isKnownWord)
+            add(term: pair.corrected, soundsLike: [pair.heard], source: .correction,
+                state: jargon ? .confirmed : .suggested)
         }
     }
 
