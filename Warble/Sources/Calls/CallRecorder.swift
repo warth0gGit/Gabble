@@ -10,6 +10,10 @@ final class CallRecorder {
 
     private(set) var transcript: CallTranscript
     var onUpdate: ((CallTranscript, _ liveMe: String, _ liveOthers: String) -> Void)?
+    /// New stretches of the other side's audio, labelled by voice.
+    var onVoices: (([VoiceSegment]) -> Void)?
+    /// Recognises who is speaking on the other side of the call.
+    let speakers: SpeakerIdentifier
 
     private let micEngine = AVAudioEngine()
     private let micTranscriber = StreamTranscriber()
@@ -22,7 +26,9 @@ final class CallRecorder {
     let folder: URL
 
     init(app: CallApp, recordingsFolder: URL) {
-        transcript = CallTranscript(appName: app.name, started: Date())
+        let started = Date()
+        transcript = CallTranscript(appName: app.name, started: started)
+        speakers = SpeakerIdentifier(origin: started)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         folder = recordingsFolder.appendingPathComponent(stamp, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -33,7 +39,8 @@ final class CallRecorder {
 
     private let app: CallApp
 
-    func start(hints: [String]) async throws {
+    func start(hints: [String], knownVoices: [Voiceprint] = []) async throws {
+        speakers.onSegments = { [weak self] segments in self?.onVoices?(segments) }
         micTranscriber.onFinal = { [weak self] text in self?.add(Self.meLabel, text) }
         micTranscriber.onVolatile = { [weak self] text in self?.liveMe = text; self?.publish() }
         callTranscriber.onFinal = { [weak self] text in self?.add(Self.othersLabel, text) }
@@ -45,12 +52,18 @@ final class CallRecorder {
         // The other people on the call.
         let callTranscriber = self.callTranscriber
         let callWriter = self.callWriter
+        let speakers = self.speakers
         let capture = SystemAudioCapture { buffer in
             callTranscriber.feed(buffer)
             callWriter.write(buffer)
+            speakers.append(buffer)
         }
         try await capture.start(bundlePrefixes: app.bundlePrefixes, appName: app.name)
         systemCapture = capture
+
+        // Voice recognition is a bonus: if its models can't load, the call is
+        // still transcribed as Me and Others.
+        Task.detached { try? await speakers.prepare(known: knownVoices) }
 
         // You.
         let input = micEngine.inputNode
@@ -68,6 +81,7 @@ final class CallRecorder {
         systemCapture = nil
         await micTranscriber.stop()
         await callTranscriber.stop()
+        await speakers.finish()
         micWriter.close()
         callWriter.close()
         transcript.ended = Date()

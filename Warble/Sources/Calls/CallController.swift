@@ -21,6 +21,20 @@ final class CallController: ObservableObject {
     @Published private(set) var recordingStarted: Date?
     @Published private(set) var lastError: String?
 
+    /// A voice Warble doesn't know yet, waiting for "Who is talking?".
+    struct UnknownVoice: Equatable {
+        var speakerID: String
+        var sample: String
+    }
+    @Published private(set) var askingWho: UnknownVoice?
+    /// Voices Warble has learned, kept between calls.
+    let voices = VoiceprintStore()
+    private var voiceSegments: [VoiceSegment] = []
+    private var namesThisCall: [String: String] = [:]
+    private var skippedVoices: Set<String> = []
+    /// How long someone must talk before Warble asks who they are.
+    private let askAfterSeconds: TimeInterval = 5
+
     var isRecording: Bool {
         if case .recording = state { return true }
         return false
@@ -107,12 +121,17 @@ final class CallController: ObservableObject {
             self?.liveMe = me
             self?.liveOthers = others
         }
+        recorder.onVoices = { [weak self] segments in self?.heard(segments) }
+        voiceSegments = []
+        namesThisCall = [:]
+        skippedVoices = []
+        askingWho = nil
         self.recorder = recorder
         transcript = recorder.transcript
         recordingStarted = Date()
         state = .recording(appName: app.name)
         do {
-            try await recorder.start(hints: lexicon.recognitionHints)
+            try await recorder.start(hints: lexicon.recognitionHints, knownVoices: voices.voices)
         } catch {
             lastError = Self.friendly(error)
             _ = await recorder.stop()
@@ -128,6 +147,8 @@ final class CallController: ObservableObject {
         state = .saving
         var finished = await recorder.stop()
         self.recorder = nil
+        askingWho = nil
+        finished.relabel { [self] segment in label(for: segment) }
         recordingStarted = nil
         liveMe = ""
         liveOthers = ""
@@ -151,6 +172,73 @@ final class CallController: ObservableObject {
             state = .idle
             showErrorBriefly()
         }
+    }
+
+    // MARK: - Voices
+
+    private func heard(_ segments: [VoiceSegment]) {
+        voiceSegments.append(contentsOf: segments)
+        askAboutNextUnknownVoice()
+    }
+
+    private func isKnown(_ speakerID: String) -> Bool {
+        namesThisCall[speakerID] != nil || voices.voices.contains { $0.name == speakerID }
+    }
+
+    private func askAboutNextUnknownVoice() {
+        guard isRecording, askingWho == nil else { return }
+        let talk = SpeakerAssigner.talkTime(voiceSegments)
+        let firstHeard = voiceSegments.map(\.speakerID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        guard let id = firstHeard.first(where: {
+            !isKnown($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
+        }) else { return }
+        askingWho = UnknownVoice(speakerID: id, sample: sample(for: id))
+    }
+
+    /// Something the voice said recently, to help you recognise them.
+    private func sample(for speakerID: String) -> String {
+        let theirs = (transcript?.segments ?? []).filter { segment in
+            segment.speaker == CallRecorder.othersLabel
+                && SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: segment), in: voiceSegments) == speakerID
+        }
+        return theirs.suffix(2).map(\.text).joined(separator: " ")
+    }
+
+    /// Saves the name for the voice being asked about, and remembers it for future calls.
+    func nameVoice(_ name: String) {
+        guard let asking = askingWho else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return skipVoice() }
+        namesThisCall[asking.speakerID] = trimmed
+        askingWho = nil
+        let speakers = recorder?.speakers
+        Task { [weak self] in
+            if let embedding = await speakers?.embedding(for: asking.speakerID) {
+                self?.voices.remember(name: trimmed, embedding: embedding)
+            }
+            self?.askAboutNextUnknownVoice()
+        }
+    }
+
+    func skipVoice() {
+        guard let asking = askingWho else { return }
+        skippedVoices.insert(asking.speakerID)
+        askingWho = nil
+        askAboutNextUnknownVoice()
+    }
+
+    /// The name to show for a transcript line.
+    func label(for segment: CallTranscript.Segment) -> String {
+        guard segment.speaker == CallRecorder.othersLabel,
+              let id = SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: segment), in: voiceSegments)
+        else { return segment.speaker }
+        if let name = namesThisCall[id] { return name }
+        if voices.voices.contains(where: { $0.name == id }) { return id }
+        let unknown = voiceSegments.map(\.speakerID).reduce(into: [String]()) {
+            if !$0.contains($1) && !isKnown($1) { $0.append($1) }
+        }
+        let number = (unknown.firstIndex(of: id) ?? 0) + 2
+        return "Speaker \(number)"
     }
 
     // MARK: - Saving

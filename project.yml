@@ -8,15 +8,21 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "9"
+    CURRENT_PROJECT_VERSION: "10"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
     DEVELOPMENT_TEAM: ""
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: "0.18.0"
 targets:
   Warble:
     type: application
     platform: macOS
+    dependencies:
+      - package: FluidAudio
     sources:
       - path: Warble/Sources
       - path: Warble/Resources

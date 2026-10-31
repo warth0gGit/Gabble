@@ -24,18 +24,46 @@ struct CallTranscript: Equatable {
 
     var plainText: String { segments.map(\.text).joined(separator: "\n") }
 
+    /// Adds a phrase as it is recognised. Phrases are kept separate so each can
+    /// be matched to the right voice later; they are merged when rendered.
     mutating func add(speaker: String, text: String, at date: Date) {
         let offset = max(0, date.timeIntervalSince(started))
-        // Merge with the previous line if the same person is still talking.
-        if let last = segments.last, last.speaker == speaker, offset - last.offset < 30 {
-            segments[segments.count - 1].text += " " + text
-        } else {
-            segments.append(Segment(offset: offset, speaker: speaker, text: text))
-        }
+        segments.append(Segment(offset: offset, speaker: speaker, text: text))
+    }
+
+    /// Roughly when a phrase was spoken. Phrases are reported just after they
+    /// finish, so they span a little before their offset.
+    static func spokenRange(of segment: Segment) -> ClosedRange<TimeInterval> {
+        let words = Double(segment.text.split(separator: " ").count)
+        let end = max(0, segment.offset - 0.8)
+        let start = max(0, end - max(1.0, words * 0.38))
+        return start...max(start, end)
     }
 
     /// Segments sorted by time, so lines from both sides interleave correctly.
     var ordered: [Segment] { segments.sorted { $0.offset < $1.offset } }
+
+    /// Consecutive phrases from the same person joined into one line.
+    var merged: [Segment] {
+        var result: [Segment] = []
+        for segment in ordered {
+            if let last = result.last, last.speaker == segment.speaker, segment.offset - last.offset < 45 {
+                result[result.count - 1].text += " " + segment.text
+            } else {
+                result.append(segment)
+            }
+        }
+        return result
+    }
+
+    /// Renames speakers, e.g. "Others" phrases to the person recognised by voice.
+    mutating func relabel(_ label: (Segment) -> String) {
+        segments = segments.map { segment in
+            var s = segment
+            s.speaker = label(segment)
+            return s
+        }
+    }
 
     var title: String {
         "\(shortAppName) call \(Self.titleFormatter.string(from: started))"
@@ -65,7 +93,7 @@ struct CallTranscript: Equatable {
         lines.append("")
         lines.append("# \(title)")
         lines.append("")
-        for segment in ordered {
+        for segment in merged {
             lines.append("**\(segment.speaker)** (\(Self.timestamp(segment.offset))): \(segment.text)")
             lines.append("")
         }

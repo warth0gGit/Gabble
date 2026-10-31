@@ -322,16 +322,39 @@ struct CallsView: View {
                     NSWorkspace.shared.activateFileViewerSelecting([calls.callsFolder])
                 }
             }
-            Section {
-                Text("Coming next: recognising each person by voice, and asking \"Who is talking?\" when Warble hears someone new.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+            KnownVoicesSection(voices: calls.voices)
         }
         .formStyle(.grouped)
         .navigationTitle("Calls")
         .onAppear { recent = calls.recentTranscripts() }
         .onChange(of: calls.state) { _, _ in recent = calls.recentTranscripts() }
+    }
+}
+
+/// The people Warble recognises by voice on calls.
+struct KnownVoicesSection: View {
+    @ObservedObject var voices: VoiceprintStore
+
+    var body: some View {
+        Section("People Warble knows by voice") {
+            Text("During a call, when Warble hears someone it doesn't know, it asks \"Who is talking?\". Their voice is remembered here, on this Mac only, so next time their lines are labelled automatically.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if voices.voices.isEmpty {
+                Text("Nobody yet.").foregroundStyle(.secondary)
+            }
+            ForEach(voices.voices.sorted { $0.name < $1.name }) { voice in
+                HStack {
+                    Text(voice.name)
+                    Spacer()
+                    Text(voice.updated, style: .date)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Forget") { voices.forget(voice) }
+                        .buttonStyle(.borderless)
+                }
+            }
+        }
     }
 }
 
