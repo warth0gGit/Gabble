@@ -75,22 +75,54 @@ struct LexiconView: View {
     @State private var showingImport = false
     @State private var importText = ""
 
+    private var canAdd: Bool {
+        !newTerm.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func addWord() {
+        guard canAdd else { return }
+        lexicon.add(term: newTerm, meaning: newMeaning)
+        newTerm = ""
+        newMeaning = ""
+    }
+
     var body: some View {
         Form {
             Section {
-                Text("Gabble learns your acronyms and jargon automatically: when you correct a word it typed, and from words that keep appearing in your calls. You can also add them yourself.")
+                Text("Gabble learns your acronyms and jargon automatically: when you correct a word it typed, and from words that keep appearing in your calls. You can also add them yourself below.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                HStack {
-                    TextField("Term, e.g. SaaS", text: $newTerm)
-                    TextField("Meaning (optional)", text: $newMeaning)
-                    Button("Add") {
-                        lexicon.add(term: newTerm, meaning: newMeaning)
-                        newTerm = ""; newMeaning = ""
+            }
+
+            Section("Add a word") {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Word or acronym")
+                            .font(.subheadline.weight(.medium))
+                        TextField("Word or acronym", text: $newTerm, prompt: Text("e.g. SaaS"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.leading)
+                            .onSubmit(addWord)
                     }
-                    .disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("What it means (optional)")
+                            .font(.subheadline.weight(.medium))
+                        TextField("What it means", text: $newMeaning, prompt: Text("e.g. Software as a Service"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.leading)
+                            .onSubmit(addWord)
+                    }
+                    HStack {
+                        Button("Paste a list…") { showingImport = true }
+                        Spacer()
+                        Button("Add word", action: addWord)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canAdd)
+                    }
                 }
-                Button("Paste a list…") { showingImport = true }
+                .padding(.vertical, 4)
             }
 
             if !lexicon.suggested.isEmpty {
