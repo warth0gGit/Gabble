@@ -68,7 +68,7 @@ jobs:
           path: Gabble.zip
 
       - name: Publish download link
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/project-thread-anfie7')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
