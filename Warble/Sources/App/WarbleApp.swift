@@ -6,6 +6,7 @@ struct WarbleApp: App {
     @StateObject private var permissions: PermissionsManager
     @StateObject private var lexicon: LexiconStore
     @StateObject private var dictation: DictationController
+    @StateObject private var calls: CallController
 
     init() {
         let appState = AppState()
@@ -16,6 +17,7 @@ struct WarbleApp: App {
         _lexicon = StateObject(wrappedValue: lexicon)
         _permissions = StateObject(wrappedValue: permissions)
         _dictation = StateObject(wrappedValue: dictation)
+        _calls = StateObject(wrappedValue: CallController(appState: appState, lexicon: lexicon))
 
         // The menu bar icon: click to turn dictation on or off, right-click for a menu.
         Task { @MainActor in
@@ -31,6 +33,7 @@ struct WarbleApp: App {
                 .environmentObject(permissions)
                 .environmentObject(lexicon)
                 .environmentObject(dictation)
+                .environmentObject(calls)
                 .frame(minWidth: 760, minHeight: 520)
                 .warbleTheme()
                 .containerBackground(WarbleColor.background, for: .window)

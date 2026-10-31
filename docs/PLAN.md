@@ -15,7 +15,7 @@ Agreed with Jonny on 31 Oct 2026. Target: Apple Silicon Mac on macOS 26 (Tahoe).
 - Learns new terms when you correct what it typed (see LEXICON.md).
 - Model picker: Apple on-device now; Hugging Face models (Whisper, Parakeet) later.
 
-## 3. Call capture and speaker recognition
+## 3. Call capture and speaker recognition (capture and Me/Others transcript built; voice recognition next)
 - Detects when Teams, Zoom, Meet, Webex, Slack or FaceTime starts using the mic and asks "Transcribe this call?".
 - Records your mic and the call audio (ScreenCaptureKit, covered by the "Screen & System Audio Recording" permission).
 - Speaker recognition from voiceprints plus context clues (calendar attendees, names said aloud, recurring meetings).

@@ -271,11 +271,16 @@ struct LexiconView: View {
 
 struct CallsView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var calls: CallController
+    @State private var recent: [URL] = []
 
     var body: some View {
         Form {
             Section {
                 Toggle("Ask \"Transcribe this call?\" when a call starts", isOn: $appState.promptForCalls)
+                Text("When one of the apps below starts using your microphone, Warble asks whether to transcribe. It records your voice and the other people's audio separately, transcribes both on this Mac, and saves the transcript to your Calls folder when the call ends.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
             Section("Watch these apps for calls") {
                 ForEach(AppState.defaultCallApps, id: \.self) { app in
@@ -286,15 +291,47 @@ struct CallsView: View {
                         }
                     ))
                 }
+                Text("Google Meet is detected when your web browser uses the microphone.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if calls.isRecording {
+                Section("Now") {
+                    HStack {
+                        Label("Transcribing a call", systemImage: "record.circle")
+                            .foregroundStyle(.red)
+                        Spacer()
+                        Button("Stop and save") { calls.stopRecording() }
+                    }
+                }
+            }
+            Section("Recent transcripts") {
+                if recent.isEmpty {
+                    Text("No transcripts yet.").foregroundStyle(.secondary)
+                }
+                ForEach(recent, id: \.self) { url in
+                    HStack {
+                        Text(url.deletingPathExtension().lastPathComponent)
+                        Spacer()
+                        Button("Open") { NSWorkspace.shared.open(url) }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                Button("Show Calls folder in Finder") {
+                    try? FileManager.default.createDirectory(at: calls.callsFolder, withIntermediateDirectories: true)
+                    NSWorkspace.shared.activateFileViewerSelecting([calls.callsFolder])
+                }
             }
             Section {
-                Text("Call detection, recording and speaker recognition are coming in the next update.")
+                Text("Coming next: recognising each person by voice, and asking \"Who is talking?\" when Warble hears someone new.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Calls")
+        .onAppear { recent = calls.recentTranscripts() }
+        .onChange(of: calls.state) { _, _ in recent = calls.recentTranscripts() }
     }
 }
 
