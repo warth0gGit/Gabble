@@ -17,7 +17,7 @@ Agreed with Jonny on 31 Oct 2026. Target: Apple Silicon Mac on macOS 26 (Tahoe).
 
 ## 3. Call capture and speaker recognition
 - Detects when Teams, Zoom, Meet, Webex, Slack or FaceTime starts using the mic and asks "Transcribe this call?".
-- Records your mic and the call audio (Core Audio process taps).
+- Records your mic and the call audio (ScreenCaptureKit, covered by the "Screen & System Audio Recording" permission).
 - Speaker recognition from voiceprints plus context clues (calendar attendees, names said aloud, recurring meetings).
 - Live "Who is talking?" prompt only for voices it doesn't know; answers are remembered for future calls.
 

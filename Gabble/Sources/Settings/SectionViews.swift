@@ -283,14 +283,19 @@ struct PermissionsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if permissions.status(kind) != .granted {
-                            Button(permissions.status(kind) == .denied ? "Open Settings" : "Allow") {
-                                if permissions.status(kind) == .denied {
-                                    permissions.openSettings(for: kind)
-                                } else {
-                                    permissions.request(kind)
-                                }
+                        switch permissions.status(kind) {
+                        case .granted:
+                            EmptyView()
+                        case .needsRelaunch:
+                            VStack(alignment: .trailing) {
+                                Button("Reopen Gabble") { relaunch() }
+                                Button("Open Settings") { permissions.openSettings(for: kind) }
+                                    .buttonStyle(.link)
                             }
+                        case .denied:
+                            Button("Open Settings") { permissions.openSettings(for: kind) }
+                        case .notAsked:
+                            Button("Allow") { permissions.request(kind) }
                         }
                     }
                 }
@@ -303,6 +308,14 @@ struct PermissionsView: View {
         .navigationTitle("Permissions")
     }
 
+    private func relaunch() {
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+    }
+
     @ViewBuilder
     private func statusIcon(_ status: PermissionsManager.Status) -> some View {
         switch status {
@@ -312,6 +325,8 @@ struct PermissionsView: View {
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red).font(.title2)
         case .notAsked:
             Image(systemName: "circle.dashed").foregroundStyle(.secondary).font(.title2)
+        case .needsRelaunch:
+            Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(.orange).font(.title2)
         }
     }
 }
