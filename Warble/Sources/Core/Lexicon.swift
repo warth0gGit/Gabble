@@ -141,9 +141,9 @@ final class LexiconStore: ObservableObject {
             self.fileURL = folder.appendingPathComponent("lexicon.json")
             // Bring the word list across from before the app was renamed from Gabble.
             let oldFile = support.appendingPathComponent("Gabble/lexicon.json")
-            if !FileManager.default.fileExists(atPath: fileURL.path),
+            if !FileManager.default.fileExists(atPath: self.fileURL.path),
                FileManager.default.fileExists(atPath: oldFile.path) {
-                try? FileManager.default.copyItem(at: oldFile, to: fileURL)
+                try? FileManager.default.copyItem(at: oldFile, to: self.fileURL)
             }
         }
         load()
