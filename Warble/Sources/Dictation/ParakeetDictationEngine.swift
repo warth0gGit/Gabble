@@ -21,7 +21,7 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
     private let maxPhrase: TimeInterval = 20
     private let refreshInterval: Duration = .milliseconds(500)
 
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine = AVAudioEngine()
     private let audio = PhraseAudio(sampleRate: Double(ParakeetService.sampleRate))
     private var loopTask: Task<Void, Never>?
     private var finalText = ""
@@ -122,6 +122,11 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
     // MARK: - Microphone
 
     private func startMicrophone() throws {
+        // A fresh engine each time: a reused one keeps the old input format after
+        // a call app switches the microphone or its sample rate, and the tap fails.
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+        audioEngine = AVAudioEngine()
         let input = audioEngine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0,
