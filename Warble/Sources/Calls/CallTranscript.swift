@@ -17,6 +17,8 @@ struct CallTranscript: Equatable {
     var category: String = "Unfiled"
     /// The calendar meeting this call was, if Warble could tell.
     var meeting: MeetingInfo?
+    /// The friendly summary at the top of the note, once Apple Intelligence has written it.
+    var summary: CallSummaryState = .none
 
     /// Labels that aren't real names.
     static func isPlaceholder(_ speaker: String) -> Bool {
@@ -124,6 +126,10 @@ struct CallTranscript: Equatable {
             if let organizer = meeting.organizer { lines.append("organizer: \(yaml(organizer))") }
         }
         lines.append("category: \(yaml(category))")
+        if let summary = summary.summary {
+            if !summary.headline.isEmpty { lines.append("summary: \(yaml(summary.headline))") }
+            lines.append("summarized_by: \(yaml(CallSummary.writer))")
+        }
         lines.append("tags: [\((["call", "warble"] + (meeting?.seriesID != nil ? ["recurring"] : [])).joined(separator: ", "))]")
         lines.append("---")
         lines.append("")
@@ -133,8 +139,32 @@ struct CallTranscript: Equatable {
             lines.append("With " + people.map(Self.link).joined(separator: ", "))
             lines.append("")
         }
-        for segment in merged {
-            lines.append("**\(segment.speaker)** (\(Self.timestamp(segment.offset))): \(segment.text)")
+        let transcriptLines = merged.map { "**\($0.speaker)** (\(Self.timestamp($0.offset))): \($0.text)" }
+        switch summary {
+        case .none:
+            for line in transcriptLines { lines += [line, ""] }
+        case .pending:
+            lines.append("> [!summary] Summary on its way")
+            lines.append("> Apple Intelligence is writing a summary of this call on your Mac. It will appear here in a minute or two.")
+            lines.append("")
+            lines += ["## Transcript", ""]
+            for line in transcriptLines { lines += [line, ""] }
+        case .failed(let reason):
+            lines.append("> [!warning] No summary")
+            lines.append("> Warble couldn't write a summary of this call: \(reason)")
+            lines.append("")
+            lines += ["## Transcript", ""]
+            for line in transcriptLines { lines += [line, ""] }
+        case .done(let summary):
+            lines += summary.markdownLines(people: people, callDate: started)
+            // The full transcript, folded away at the bottom (click to open it in Obsidian).
+            let words = SummaryChunker.wordCount(plainText)
+            let minutes = max(1, Int((duration / 60).rounded()))
+            lines.append("> [!quote]- Full transcript (\(minutes) min, \(Self.countFormatter.string(from: NSNumber(value: words)) ?? "\(words)") words)")
+            for (index, line) in transcriptLines.enumerated() {
+                if index > 0 { lines.append(">") }
+                lines.append("> " + line)
+            }
             lines.append("")
         }
         return lines.joined(separator: "\n")
@@ -162,6 +192,13 @@ struct CallTranscript: Equatable {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HHmm"
+        return f
+    }()
+
+    private static let countFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.numberStyle = .decimal
         return f
     }()
 
