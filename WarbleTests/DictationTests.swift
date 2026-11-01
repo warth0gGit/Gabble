@@ -292,7 +292,7 @@ final class FillerAndScratchTests: XCTestCase {
 }
 
 @MainActor
-final class TextInserterTests: XCTestCase {
+final class WebAppDetectionTests: XCTestCase {
     func testElectronAppsCountAsWebBased() throws {
         let app = FileManager.default.temporaryDirectory.appendingPathComponent("Fake-\(UUID().uuidString).app")
         defer { try? FileManager.default.removeItem(at: app) }
