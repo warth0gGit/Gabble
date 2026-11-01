@@ -279,6 +279,10 @@ final class DictationController: ObservableObject {
         startedAt = nil
         isHandsFree = false
         guard !raw.isEmpty else {
+            // Say so, rather than silently typing nothing.
+            lastNote = usingParakeet
+                ? "Warble didn't hear any words in your last dictation."
+                : "Warble didn't hear any words in your last dictation (Apple's speech engine was used)."
             phase = .idle
             return
         }
