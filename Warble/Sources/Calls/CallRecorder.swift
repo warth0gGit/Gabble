@@ -15,7 +15,7 @@ final class CallRecorder {
     /// Recognises who is speaking on the other side of the call.
     let speakers: SpeakerIdentifier
 
-    private let micEngine = AVAudioEngine()
+    private let microphone = MicrophoneCapture()
     private let micTranscriber = StreamTranscriber()
     private let callTranscriber = StreamTranscriber()
     private var systemCapture: SystemAudioCapture?
@@ -65,18 +65,18 @@ final class CallRecorder {
         // still transcribed as Me and Others.
         Task.detached { try? await speakers.prepare(known: knownVoices) }
 
-        // You.
-        let input = micEngine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 4096, format: format,
-                         block: Self.makeMicTap(transcriber: micTranscriber, writer: micWriter))
-        micEngine.prepare()
-        try micEngine.start()
+        // You, on the same microphone the call app uses. MicrophoneCapture keeps
+        // recording when AirPods connect, disconnect or switch mode mid-call.
+        let micTranscriber = self.micTranscriber
+        let micWriter = self.micWriter
+        try await microphone.start(deviceUID: MicrophoneChoice.systemDefault) { buffer in
+            micTranscriber.feed(buffer)
+            micWriter.write(buffer)
+        }
     }
 
     func stop() async -> CallTranscript {
-        micEngine.inputNode.removeTap(onBus: 0)
-        micEngine.stop()
+        microphone.stop()
         await systemCapture?.stop()
         systemCapture = nil
         await micTranscriber.stop()
@@ -107,14 +107,6 @@ final class CallRecorder {
     private func publish() {
         onUpdate?(transcript, liveMe, liveOthers)
     }
-
-    nonisolated private static func makeMicTap(transcriber: StreamTranscriber,
-                                               writer: AudioFileWriter) -> AVAudioNodeTapBlock {
-        return { buffer, _ in
-            transcriber.feed(buffer)
-            writer.write(buffer)
-        }
-    }
 }
 
 /// Writes audio buffers to a file from any thread.
@@ -124,6 +116,9 @@ final class AudioFileWriter: @unchecked Sendable {
     private let lock = NSLock()
     private var closed = false
     private var started: Date?
+    /// The file keeps the first buffer's format; later audio in another format
+    /// (the microphone changed mid-call) is converted to it.
+    private var reformatter: AudioReformatter?
 
     init(url: URL) { self.url = url }
 
@@ -146,7 +141,17 @@ final class AudioFileWriter: @unchecked Sendable {
                                     commonFormat: buffer.format.commonFormat,
                                     interleaved: buffer.format.isInterleaved)
         }
-        try? file?.write(from: buffer)
+        guard let file else { return }
+        if buffer.format == file.processingFormat {
+            try? file.write(from: buffer)
+            return
+        }
+        if reformatter?.target != file.processingFormat {
+            reformatter = AudioReformatter(target: file.processingFormat)
+        }
+        if let converted = reformatter?.convert(buffer) {
+            try? file.write(from: converted)
+        }
     }
 
     func close() {
