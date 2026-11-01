@@ -517,8 +517,11 @@ final class CallController: ObservableObject {
     private func voiceName(_ id: String, voices heard: [VoiceSegment], names: [String: String]) -> String {
         if let name = names[id] { return name }
         if voices.voices.contains(where: { $0.name == id }) { return id }
-        let unknown = heard.map(\.speakerID).reduce(into: [String]()) {
-            if !$0.contains($1) && names[$1] == nil && !voices.voices.contains(where: { $0.name == $1 }) { $0.append($1) }
+        let known = Set(voices.voices.map(\.name))
+        var unknown: [String] = []
+        for speaker in heard.map(\.speakerID)
+        where !unknown.contains(speaker) && names[speaker] == nil && !known.contains(speaker) {
+            unknown.append(speaker)
         }
         let number = (unknown.firstIndex(of: id) ?? 0) + 2
         return "Speaker \(number)"
