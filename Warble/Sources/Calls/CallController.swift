@@ -59,6 +59,10 @@ final class CallController: ObservableObject {
     }
     @Published private(set) var savedStats: SavedStats?
     private var meterTask: Task<Void, Never>?
+    /// The call whose save the card is showing, if any.
+    private var savingCall: UUID?
+    /// A call that started while the last one was still being stopped.
+    private var queuedCall: CallDetector.ActiveCall?
     /// Remembers where calls go, so it can file them without asking.
     let filing = FilingStore()
     private let calendar = CalendarLookup()
@@ -129,8 +133,19 @@ final class CallController: ObservableObject {
     // MARK: - Detector events
 
     private func callStarted(_ call: CallDetector.ActiveCall) {
-        guard state == .idle || isSavedState else { return }
-        // A new call while the last one is waiting to be filed: it stays in Unfiled.
+        // Back-to-back calls: the last call may still be saving or waiting to be
+        // filed. Ask about the new one straight away; the last one finishes saving
+        // in the background (and stays in Unfiled if it was waiting to be filed).
+        if isRecording {
+            // The call being recorded has just ended in the same moment; ask
+            // about this one as soon as that recording has stopped.
+            queuedCall = call
+            return
+        }
+        guard state == .idle || state == .saving || isSavedState else { return }
+        hideTask?.cancel()
+        lastError = nil
+        savingCall = nil
         pendingCall = call
         state = .asking(appName: call.app.name)
     }
@@ -170,8 +185,24 @@ final class CallController: ObservableObject {
         Task { await stopAndSave() }
     }
 
+    /// Starts transcribing the call app that's using the microphone now, from
+    /// the menu bar, in case Warble didn't ask (for example a call that
+    /// followed straight on from another).
+    func transcribeActiveCall() {
+        guard !isRecording, let call = detector.activeCall else { return }
+        pendingCall = nil
+        Task { await startRecording(app: call.app) }
+    }
+
+    /// Whether "Transcribe this call" makes sense right now.
+    var canTranscribeActiveCall: Bool {
+        !isRecording && detector.activeCall != nil
+    }
+
     func startRecording(app: CallApp) async {
         lastError = nil
+        savingCall = nil
+        queuedCall = nil
         let recorder = CallRecorder(app: app, recordingsFolder: Self.recordingsFolder)
         recorder.onUpdate = { [weak self] transcript, me, others in
             self?.transcript = transcript
@@ -267,16 +298,37 @@ final class CallController: ObservableObject {
 
     private func stopAndSave() async {
         guard let recorder else { return }
+        // Take everything about this call now. Saving can take a while (Parakeet
+        // re-reads the whole recording), and with back-to-back calls the next
+        // call can start meanwhile; it must find Warble ready, not busy.
+        self.recorder = nil
         stopSpeakerMeter()
+        let heard = VoiceBox(voiceSegments)
+        let names = namesThisCall
+        recorder.onVoices = { segments in heard.segments.append(contentsOf: segments) }
+        recorder.onUpdate = nil
+        let callMeeting = meeting
+        meeting = nil
+        askingWho = nil
+        recordingStarted = nil
+        liveMe = ""
+        liveOthers = ""
         panelMinimized = false
         savingRereads = appState.recognitionModel == .parakeet
         summaryWillFollow = SmartCleanup.isAvailable
             && SummaryChunker.wordCount(recorder.transcript.plainText) >= SummaryChunker.minimumWords
         savingStep = savingRereads ? .rereading : .tidying
         state = .saving
+        let token = UUID()
+        savingCall = token
+        // Whether the card is still showing this call's save (not a newer call).
+        var shownHere: Bool { state == .saving && savingCall == token }
+        if let next = queuedCall {
+            queuedCall = nil
+            callStarted(next)
+        }
+
         var finished = await recorder.stop()
-        self.recorder = nil
-        askingWho = nil
         if appState.recognitionModel == .parakeet, await ParakeetService.shared.isReady {
             // Parakeet re-reads a call at well over 100× real time, so this is
             // normally seconds. Never let it hold up saving: keep the live
@@ -290,49 +342,51 @@ final class CallController: ObservableObject {
                 finished = better
             }
         }
-        if savingRereads { await showStep(.tidying) }
-        finished.relabel { [self] segment in label(for: segment) }
-        recordingStarted = nil
-        liveMe = ""
-        liveOthers = ""
+        if savingRereads { await showStep(.tidying, for: token) }
+        let voicesHeard = heard.segments
+        finished.relabel { [self] segment in label(for: segment, voices: voicesHeard, names: names) }
         // Word List fixes, then the light tidy-up (on every call, however short).
         finished.segments = finished.segments.compactMap { segment in
             var s = segment
             s.text = TextCleaner.tidyCall(TextCleaner.applyReplacements(s.text, lexicon.replacements))
             return s.text.isEmpty ? nil : s
         }
-        // The meeting may have been added to the calendar during the call.
-        finished.meeting = meeting ?? calendar.meeting(at: finished.started, appName: finished.appName)
-        meeting = nil
+        finished.meeting = callMeeting ?? calendar.meeting(at: finished.started, appName: finished.appName)
         guard !finished.segments.isEmpty else {
-            transcript = finished
-            savingStep = nil
-            lastError = "Warble didn't hear anything on that call, so there was nothing to save."
-            state = .idle
-            showErrorBriefly()
+            if shownHere {
+                transcript = finished
+                savingStep = nil
+                lastError = "Warble didn't hear anything on that call, so there was nothing to save."
+                state = .idle
+                showErrorBriefly()
+            }
             return
         }
-        await showStep(.saving)
+        await showStep(.saving, for: token)
         let features = CallFeatures(seriesID: finished.meeting?.seriesID, meetingTitle: finished.meeting?.title,
                                     people: finished.people, date: finished.started)
         let sure = filing.autoFolder(for: features)
         finished.category = sure?.folder ?? "Unfiled"
         finished.summary = initialSummaryState(for: finished)
-        transcript = finished
         do {
             let url = try save(finished)
             lexicon.harvest(from: finished.plainText)
-            lastSaved = (url, finished, features)
+            if let sure { filing.learn(features, folder: sure.folder) }
             if finished.summary == .pending { summarise(finished, savedAt: url) }
-            await showStep(nil)
             let stats = SavedStats(minutes: max(1, Int((finished.duration / 60).rounded())),
                                    speakers: finished.speakers.count,
                                    words: SummaryChunker.wordCount(finished.plainText),
                                    summaryPending: finished.summary == .pending)
-            savedStats = stats
             notifySaved(finished, stats: stats, url: url, filed: sure?.folder)
+            // A newer call has taken over the card: this one stays where it was
+            // saved (Unfiled if Warble wasn't sure), and the notification says so.
+            guard shownHere else { return }
+            await showStep(nil, for: token)
+            guard shownHere else { return }
+            lastSaved = (url, finished, features)
+            transcript = finished
+            savedStats = stats
             if let sure {
-                filing.learn(features, folder: sure.folder)
                 filedNote = "Filed in \(sure.folder) (\(sure.reason))."
                 state = .saved(url)
                 scheduleHide(after: 10)
@@ -343,8 +397,13 @@ final class CallController: ObservableObject {
                 state = .filing(url)
             }
         } catch {
+            let message = "Couldn't save the transcript: \(error.localizedDescription)"
+            guard shownHere else {
+                CallNotifier.shared.saveFailed(message)
+                return
+            }
             savingStep = nil
-            lastError = "Couldn't save the transcript: \(error.localizedDescription)"
+            lastError = message
             state = .idle
             showErrorBriefly()
         }
@@ -352,15 +411,17 @@ final class CallController: ObservableObject {
 
     /// Moves the end-of-call checklist on, pausing briefly so each step can be
     /// seen ticking off (the work itself is usually instant).
-    private func showStep(_ step: SavingStep?) async {
+    private func showStep(_ step: SavingStep?, for token: UUID) async {
+        guard state == .saving, savingCall == token else { return }
         try? await Task.sleep(for: .milliseconds(450))
+        guard state == .saving, savingCall == token else { return }
         savingStep = step
     }
 
     private func notifySaved(_ call: CallTranscript, stats: SavedStats, url: URL, filed folder: String?) {
         let name = call.meeting?.title ?? "\(call.shortAppName) call"
         let people = stats.speakers == 1 ? "1 speaker" : "\(stats.speakers) speakers"
-        let place = folder.map { "Filed in \($0)." } ?? "Saved in Unfiled. Choose a folder in the Warble card."
+        let place = folder.map { "Filed in \($0)." } ?? "Saved in Unfiled."
         CallNotifier.shared.transcriptSaved(
             title: "Call transcript saved",
             body: "\(name): \(stats.minutes) min, \(people). \(place)",
@@ -438,20 +499,26 @@ final class CallController: ObservableObject {
         askAboutNextUnknownVoice()
     }
 
-    /// The name to show for a transcript line.
-    func label(for segment: CallTranscript.Segment) -> String {
+    /// The name to show for a transcript line, using that call's own voices and names.
+    private func label(for segment: CallTranscript.Segment, voices heard: [VoiceSegment],
+                       names: [String: String]) -> String {
         guard segment.speaker == CallRecorder.othersLabel,
-              let id = SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: segment), in: voiceSegments)
+              let id = SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: segment), in: heard)
         else { return segment.speaker }
-        return voiceName(id)
+        return voiceName(id, voices: heard, names: names)
     }
 
-    /// A voice's name: given this call, remembered from earlier calls, or "Speaker 2".
+    /// A voice's name on the call being transcribed now.
     private func voiceName(_ id: String) -> String {
-        if let name = namesThisCall[id] { return name }
+        voiceName(id, voices: voiceSegments, names: namesThisCall)
+    }
+
+    /// A voice's name: given on that call, remembered from earlier calls, or "Speaker 2".
+    private func voiceName(_ id: String, voices heard: [VoiceSegment], names: [String: String]) -> String {
+        if let name = names[id] { return name }
         if voices.voices.contains(where: { $0.name == id }) { return id }
-        let unknown = voiceSegments.map(\.speakerID).reduce(into: [String]()) {
-            if !$0.contains($1) && !isKnown($1) { $0.append($1) }
+        let unknown = heard.map(\.speakerID).reduce(into: [String]()) {
+            if !$0.contains($1) && names[$1] == nil && !voices.voices.contains(where: { $0.name == $1 }) { $0.append($1) }
         }
         let number = (unknown.firstIndex(of: id) ?? 0) + 2
         return "Speaker \(number)"
@@ -651,4 +718,12 @@ final class CallController: ObservableObject {
         }
         return text
     }
+}
+
+/// Voice segments for a call that is finishing, so late arrivals from its
+/// speaker recognition don't mix with the next call's.
+@MainActor
+final class VoiceBox {
+    var segments: [VoiceSegment]
+    init(_ segments: [VoiceSegment]) { self.segments = segments }
 }

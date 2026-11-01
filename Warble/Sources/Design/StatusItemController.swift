@@ -135,6 +135,12 @@ final class StatusItemController: NSObject {
             stop.image = NSImage(systemSymbolName: "stop.circle", accessibilityDescription: nil)
             stop.target = self
             menu.addItem(stop)
+        } else if calls?.canTranscribeActiveCall == true {
+            menu.addItem(.separator())
+            let start = NSMenuItem(title: "Transcribe this call", action: #selector(startCall), keyEquivalent: "")
+            start.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)
+            start.target = self
+            menu.addItem(start)
         }
 
         if let error = dictation.lastError {
@@ -176,6 +182,10 @@ final class StatusItemController: NSObject {
 
     @objc private func stopCall() {
         calls?.stopRecording()
+    }
+
+    @objc private func startCall() {
+        calls?.transcribeActiveCall()
     }
 
     @objc private func copyLast() {

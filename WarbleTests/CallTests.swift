@@ -160,3 +160,57 @@ final class SpeakingMeterTests: XCTestCase {
         XCTAssertEqual(ElapsedTime.format(3725), "1:02:05")
     }
 }
+
+@MainActor
+final class CallDetectorTests: XCTestCase {
+    private let teams = MicUser(bundleID: "com.microsoft.teams2", pid: 100)
+    private let zoom = MicUser(bundleID: "us.zoom.xos", pid: 200)
+
+    private func detector() -> (CallDetector, () -> [String]) {
+        let d = CallDetector()
+        d.enabledApps = ["Microsoft Teams", "Zoom"]
+        var events: [String] = []
+        d.onCallStarted = { events.append("start \($0.app.name)") }
+        d.onCallEnded = { events.append("end \($0.app.name)") }
+        return (d, { events })
+    }
+
+    func testBackToBackCallsWithAShortGapAreTwoCalls() {
+        let (d, events) = detector()
+        let t = Date()
+        d.update(users: [teams], now: t)
+        d.update(users: [teams], now: t.addingTimeInterval(60))
+        d.update(users: [], now: t.addingTimeInterval(61))
+        d.update(users: [], now: t.addingTimeInterval(67))   // 6 s quiet: call over
+        d.update(users: [teams], now: t.addingTimeInterval(69))
+        XCTAssertEqual(events(), ["start Microsoft Teams", "end Microsoft Teams", "start Microsoft Teams"])
+    }
+
+    func testBriefMicDropMidCallIsTheSameCall() {
+        let (d, events) = detector()
+        let t = Date()
+        d.update(users: [teams], now: t)
+        d.update(users: [], now: t.addingTimeInterval(10))
+        d.update(users: [], now: t.addingTimeInterval(13))
+        d.update(users: [teams], now: t.addingTimeInterval(14))
+        XCTAssertEqual(events(), ["start Microsoft Teams"])
+    }
+
+    func testAnotherAppUsingTheMicDoesNotEndTheCall() {
+        let (d, events) = detector()
+        let t = Date()
+        d.update(users: [teams], now: t)
+        d.update(users: [zoom, teams], now: t.addingTimeInterval(5))
+        d.update(users: [teams], now: t.addingTimeInterval(10))
+        XCTAssertEqual(events(), ["start Microsoft Teams"])
+    }
+
+    func testSwitchingStraightToAnotherCallApp() {
+        let (d, events) = detector()
+        let t = Date()
+        d.update(users: [teams], now: t)
+        d.update(users: [zoom], now: t.addingTimeInterval(30))
+        d.update(users: [zoom], now: t.addingTimeInterval(36))
+        XCTAssertEqual(events(), ["start Microsoft Teams", "end Microsoft Teams", "start Zoom"])
+    }
+}

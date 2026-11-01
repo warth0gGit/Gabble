@@ -64,7 +64,13 @@ final class CallPanel {
     private func resize(to newSize: CGSize) {
         guard newSize.width > 1, newSize.height > 1, newSize != size else { return }
         size = newSize
-        if panel.isVisible { place() }
+        // Move the window after SwiftUI finishes its layout pass, never during it.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible else { return }
+                self.place()
+            }
+        }
     }
 
     /// Keeps the card's top-right corner where it was (the screen's top-right
@@ -202,14 +208,19 @@ struct CallPanelView: View {
             Button {
                 calls.stopRecording()
             } label: {
-                ZStack {
-                    Circle().strokeBorder(WarbleColor.line, lineWidth: 1)
-                    RoundedRectangle(cornerRadius: 2).fill(Color.red.opacity(0.85)).frame(width: 8, height: 8)
+                HStack(spacing: 4) {
+                    Image(systemName: "stop.fill").font(.system(size: 7, weight: .bold))
+                    Text("Stop").font(.caption.weight(.medium))
                 }
-                .frame(width: 22, height: 22)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .foregroundStyle(.primary)
+                .background(Capsule().fill(WarbleColor.surface))
+                .overlay(Capsule().strokeBorder(WarbleColor.line, lineWidth: 1))
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .help("Stop and save the transcript")
+            .help("Stop transcribing and save the transcript")
         }
         FlowLayout(spacing: 6) {
             ForEach(calls.liveSpeakers) { SpeakerChip(speaker: $0) }

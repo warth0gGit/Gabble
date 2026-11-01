@@ -84,11 +84,21 @@ final class CallRecorder {
 
     func stop() async -> CallTranscript {
         microphone.stop()
-        await systemCapture?.stop()
+        let capture = systemCapture
         systemCapture = nil
+        // Every step has a time limit, so finishing a call can never get stuck
+        // (the next call may be about to start).
+        _ = await withDeadline(seconds: 5) {
+            await capture?.stop()
+            return true
+        }
         await micTranscriber.stop()
         await callTranscriber.stop()
-        await speakers.finish()
+        let speakers = self.speakers
+        _ = await withDeadline(seconds: 20) {
+            await speakers.finish()
+            return true
+        }
         micWriter.close()
         callWriter.close()
         transcript.ended = Date()

@@ -29,6 +29,18 @@ final class CallNotifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Tells you a call couldn't be saved, when the card is busy with a newer call.
+    func saveFailed(_ message: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Warble couldn't save a call"
+            content.body = message
+            center.add(UNNotificationRequest(identifier: "call-failed-\(UUID().uuidString)", content: content, trigger: nil))
+        }
+    }
+
     // Show the banner even when Warble is the active app.
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {

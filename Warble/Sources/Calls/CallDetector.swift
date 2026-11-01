@@ -48,12 +48,14 @@ final class CallDetector {
     private var timer: Timer?
     private(set) var current: ActiveCall?
     private var lastSeen: Date?
-    /// How long the mic must be idle before a call counts as over.
-    private let endGrace: TimeInterval = 12
+    /// How long the mic must be idle before a call counts as over. Short, so
+    /// back-to-back calls are told apart; long enough to ride out AirPods
+    /// switching microphones mid-call.
+    private let endGrace: TimeInterval = 5
 
     func start() {
         guard timer == nil else { return }
-        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -67,23 +69,38 @@ final class CallDetector {
 
     private func poll() {
         let ownPID = ProcessInfo.processInfo.processIdentifier
-        let users = Self.processesUsingMicrophone().filter { $0.pid != ownPID }
-        let match = users.lazy.compactMap { user -> ActiveCall? in
+        update(users: Self.processesUsingMicrophone().filter { $0.pid != ownPID }, now: Date())
+    }
+
+    /// One check: which apps are using the microphone at `now`. Separate from
+    /// Core Audio so it can be tested.
+    func update(users: [MicUser], now: Date) {
+        let matches = users.compactMap { user -> ActiveCall? in
             guard let app = CallApp.matching(bundleID: user.bundleID, enabledNames: self.enabledApps) else { return nil }
             return ActiveCall(app: app, bundleID: user.bundleID, pid: user.pid)
-        }.first
-
-        if let match {
-            lastSeen = Date()
-            if current == nil {
-                current = match
-                onCallStarted?(match)
+        }
+        if let call = current {
+            if let same = matches.first(where: { $0.app == call.app }) {
+                // Still on the call (its audio process may have changed).
+                current = same
+                lastSeen = now
+            } else if let lastSeen, now.timeIntervalSince(lastSeen) > endGrace {
+                // The call app let go of the microphone: the call is over.
+                current = nil
+                onCallEnded?(call)
             }
-        } else if let call = current, let lastSeen, Date().timeIntervalSince(lastSeen) > endGrace {
-            current = nil
-            onCallEnded?(call)
+        }
+        // A new call: the first time a call app takes the microphone, including
+        // straight after another call ends (or in another call app).
+        if current == nil, let match = matches.first {
+            current = match
+            lastSeen = now
+            onCallStarted?(match)
         }
     }
+
+    /// The call app using the microphone right now, if any (for "Transcribe this call").
+    var activeCall: ActiveCall? { current }
 
     // MARK: - Core Audio
 
