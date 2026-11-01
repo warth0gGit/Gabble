@@ -68,7 +68,11 @@ final class CallController: ObservableObject {
 
         $state
             .receive(on: RunLoop.main)
-            .sink { [weak self] state in self?.updatePanel(for: state) }
+            .sink { [weak self] _ in self?.updatePanel() }
+            .store(in: &cancellables)
+        $askingWho
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updatePanel() }
             .store(in: &cancellables)
     }
 
@@ -280,8 +284,20 @@ final class CallController: ObservableObject {
 
     // MARK: - Pop-up
 
-    private func updatePanel(for state: State) {
-        if state == .idle && lastError == nil {
+    /// The pop-up shows only when there's something to answer or see:
+    /// "Transcribe this call?", "Identify Speaker", a saved transcript, or a problem.
+    /// While a call is being transcribed the menu bar icon shows it instead.
+    private var needsPanel: Bool {
+        if lastError != nil && state == .idle { return true }
+        if askingWho != nil { return true }
+        switch state {
+        case .asking, .saved: return true
+        default: return false
+        }
+    }
+
+    private func updatePanel() {
+        guard needsPanel else {
             panel?.hide()
             return
         }
@@ -295,6 +311,7 @@ final class CallController: ObservableObject {
             try? await Task.sleep(for: .seconds(seconds))
             guard let self, !Task.isCancelled else { return }
             if case .saved = self.state { self.state = .idle }
+            self.updatePanel()
         }
     }
 
@@ -305,13 +322,13 @@ final class CallController: ObservableObject {
             try? await Task.sleep(for: .seconds(10))
             guard let self, !Task.isCancelled else { return }
             self.lastError = nil
-            if self.state == .idle { self.panel?.hide() }
+            self.updatePanel()
         }
     }
 
     func dismissError() {
         lastError = nil
-        if state == .idle { panel?.hide() }
+        updatePanel()
     }
 
     private static func friendly(_ error: Error) -> String {

@@ -17,11 +17,13 @@ struct WarbleApp: App {
         _lexicon = StateObject(wrappedValue: lexicon)
         _permissions = StateObject(wrappedValue: permissions)
         _dictation = StateObject(wrappedValue: dictation)
-        _calls = StateObject(wrappedValue: CallController(appState: appState, lexicon: lexicon))
+        let calls = CallController(appState: appState, lexicon: lexicon)
+        _calls = StateObject(wrappedValue: calls)
 
         // The menu bar icon: click to turn dictation on or off, right-click for a menu.
         Task { @MainActor in
-            StatusItemController.shared.install(appState: appState, dictation: dictation, permissions: permissions)
+            StatusItemController.shared.install(appState: appState, dictation: dictation, calls: calls,
+                                                permissions: permissions)
         }
     }
 

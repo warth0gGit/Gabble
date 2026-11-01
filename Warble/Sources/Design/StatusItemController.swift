@@ -15,14 +15,17 @@ final class StatusItemController: NSObject {
     private var statusItem: NSStatusItem?
     private var appState: AppState?
     private var dictation: DictationController?
+    private var calls: CallController?
     private var permissions: PermissionsManager?
     private var cancellables: Set<AnyCancellable> = []
     private var animationTimer: Timer?
 
-    func install(appState: AppState, dictation: DictationController, permissions: PermissionsManager) {
+    func install(appState: AppState, dictation: DictationController, calls: CallController,
+                 permissions: PermissionsManager) {
         guard statusItem == nil else { return }
         self.appState = appState
         self.dictation = dictation
+        self.calls = calls
         self.permissions = permissions
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -42,6 +45,10 @@ final class StatusItemController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.stateChanged() }
             .store(in: &cancellables)
+        calls.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.stateChanged() }
+            .store(in: &cancellables)
 
         stateChanged()
     }
@@ -49,9 +56,10 @@ final class StatusItemController: NSObject {
     // MARK: - Drawing
 
     private var isListening: Bool { dictation?.phase == .listening }
+    private var isTranscribingCall: Bool { calls?.isRecording == true }
 
     private func stateChanged() {
-        if isListening {
+        if isListening || isTranscribingCall {
             if animationTimer == nil {
                 let timer = Timer(timeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in
                     MainActor.assumeIsolated { self?.redraw() }
@@ -68,21 +76,28 @@ final class StatusItemController: NSObject {
 
     private func redraw() {
         guard let button = statusItem?.button, let dictation else { return }
+        let time = Date().timeIntervalSinceReferenceDate
+        // During a call the wave moves gently on its own; dictation follows your voice.
+        let level = isListening ? dictation.level : 0.35 + 0.15 * sin(time * 2)
         button.image = MenuBarIcon.image(
-            time: Date().timeIntervalSinceReferenceDate,
-            listening: isListening,
+            time: time,
+            listening: isListening || isTranscribingCall,
             enabled: dictation.phase == .idle || isListening,
-            level: dictation.level
+            level: level
         )
         let tip: String
         switch dictation.phase {
         case .listening: tip = "Listening. Click to stop and type what you said."
         case .processing: tip = "Tidying up your words…"
         case .preparing(let message): tip = message
-        case .idle: tip = "Click to start dictating. Right-click for more."
+        case .idle:
+            tip = isTranscribingCall
+                ? "Transcribing this call. Right-click to stop."
+                : "Click to start dictating. Right-click for more."
         }
         button.toolTip = tip
-        button.setAccessibilityLabel(isListening ? "Warble, listening" : "Warble")
+        let label = isListening ? "Warble, listening" : isTranscribingCall ? "Warble, transcribing a call" : "Warble"
+        button.setAccessibilityLabel(label)
     }
 
     // MARK: - Clicks
@@ -113,6 +128,14 @@ final class StatusItemController: NSObject {
         shortcut.target = self
         shortcut.state = appState.dictationEnabled ? .on : .off
         menu.addItem(shortcut)
+
+        if calls?.isRecording == true {
+            menu.addItem(.separator())
+            let stop = NSMenuItem(title: "Stop transcribing this call", action: #selector(stopCall), keyEquivalent: "")
+            stop.image = NSImage(systemSymbolName: "stop.circle", accessibilityDescription: nil)
+            stop.target = self
+            menu.addItem(stop)
+        }
 
         if let error = dictation.lastError {
             menu.addItem(.separator())
@@ -149,6 +172,10 @@ final class StatusItemController: NSObject {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func stopCall() {
+        calls?.stopRecording()
     }
 
     @objc private func copyLast() {

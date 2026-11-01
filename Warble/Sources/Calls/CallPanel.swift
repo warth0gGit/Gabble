@@ -1,14 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// A small floating card in the top-right corner for call transcription:
-/// the "Transcribe this call?" question, then a recording indicator with Stop.
-/// It can be clicked without taking focus away from the call.
+/// A small floating card in the top-right corner for calls: "Transcribe this call?",
+/// "Identify Speaker" and "Transcript saved". While a call is transcribed it stays
+/// hidden; the menu bar icon shows that instead. It can be clicked without taking
+/// focus away from the call.
 @MainActor
 final class CallPanel {
     private let panel: NSPanel
 
-    /// A borderless panel that can still take typing (for "Who is talking?").
+    /// A borderless panel that can still take typing (for "Identify Speaker").
     private final class TypingPanel: NSPanel {
         override var canBecomeKey: Bool { true }
     }
@@ -31,14 +32,29 @@ final class CallPanel {
         let host = NSHostingView(rootView: CallPanelView().environmentObject(controller))
         host.frame = panel.contentLayoutRect
         panel.contentView = host
+        self.host = host
     }
 
+    private var host: NSView?
+
     func show() {
+        fitToScreen()
+        panel.orderFrontRegardless()
+        // SwiftUI may redraw the card a moment later with new content; fit again then.
+        DispatchQueue.main.async { [weak self] in self?.fitToScreen() }
+    }
+
+    /// Fits the panel to the card and pins it to the top-right corner,
+    /// so it never covers more of the screen than it needs to.
+    private func fitToScreen() {
         guard let screen = NSScreen.main else { return }
         let frame = screen.visibleFrame
-        let size = panel.frame.size
-        panel.setFrameOrigin(NSPoint(x: frame.maxX - size.width - 16, y: frame.maxY - size.height - 12))
-        panel.orderFrontRegardless()
+        host?.layoutSubtreeIfNeeded()
+        var size = host?.fittingSize ?? panel.frame.size
+        size.width = 340
+        size.height = max(60, size.height)
+        panel.setFrame(NSRect(x: frame.maxX - size.width - 16, y: frame.maxY - size.height - 12,
+                              width: size.width, height: size.height), display: true)
     }
 
     func hide() {
@@ -51,12 +67,10 @@ struct CallPanelView: View {
     @State private var whoName = ""
 
     var body: some View {
-        VStack {
-            card
-            Spacer(minLength: 0)
-        }
-        .frame(width: 340, height: 210, alignment: .top)
-        .environment(\.colorScheme, .dark)
+        card
+            .frame(width: 340)
+            .fixedSize(horizontal: false, vertical: true)
+            .environment(\.colorScheme, .dark)
     }
 
     private var card: some View {
@@ -65,13 +79,15 @@ struct CallPanelView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WarbleColor.surface, in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.black, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(WarbleColor.green.opacity(0.25), lineWidth: 1))
     }
 
     @ViewBuilder
     private var content: some View {
-        if let error = calls.lastError, calls.state == .idle {
+        if calls.askingWho != nil {
+            identifySpeaker
+        } else if let error = calls.lastError, calls.state == .idle {
             Label(error, systemImage: "exclamationmark.triangle.fill")
                 .font(.callout)
                 .foregroundStyle(.orange)
@@ -95,29 +111,8 @@ struct CallPanelView: View {
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 }
-            case .recording where calls.askingWho != nil:
-                whoIsTalking
-            case .recording(let appName):
-                HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 8, height: 8)
-                    Text("Transcribing \(shortName(appName)) call").font(.headline)
-                    Spacer()
-                    if let start = calls.recordingStarted {
-                        Text(start, style: .timer)
-                            .font(.system(.callout, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text(latestLine)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.head)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                HStack {
-                    Spacer()
-                    Button("Stop") { calls.stopRecording() }
-                }
+            case .recording:
+                EmptyView()
             case .saving:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -143,49 +138,42 @@ struct CallPanelView: View {
         }
     }
 
+    /// "Identify Speaker": a black card with the Warble logo and a name box.
+    /// It goes away as soon as a name is entered.
     @ViewBuilder
-    private var whoIsTalking: some View {
+    private var identifySpeaker: some View {
         HStack(spacing: 8) {
-            Circle().fill(Color.red).frame(width: 8, height: 8)
-            Text("Who is talking?").font(.headline)
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 22, height: 22)
+            Text("Warble").font(.headline)
+            Spacer()
+            Button {
+                whoName = ""
+                calls.skipVoice()
+            } label: {
+                Image(systemName: "xmark").font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Not now")
         }
+        TextField("Identify Speaker", text: $whoName)
+            .textFieldStyle(.roundedBorder)
+            .controlSize(.large)
+            .onSubmit(saveName)
         if let sample = calls.askingWho?.sample, !sample.isEmpty {
-            Text("\u{201C}\(sample)\u{201D}")
-                .font(.callout)
+            Text("Said: \u{201C}\(sample)\u{201D}")
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .truncationMode(.head)
-        } else {
-            Text("Warble hears a voice it doesn't know yet.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
         }
-        TextField("Their name", text: $whoName)
-            .textFieldStyle(.roundedBorder)
-            .onSubmit(saveName)
-        HStack {
-            Button("Skip") { whoName = ""; calls.skipVoice() }
-            Spacer()
-            Button("Save", action: saveName)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(whoName.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
-        Text("Warble will recognise them on future calls.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
     }
 
     private func saveName() {
         calls.nameVoice(whoName)
         whoName = ""
-    }
-
-    private var latestLine: String {
-        if !calls.liveOthers.isEmpty { return "Others: " + calls.liveOthers }
-        if !calls.liveMe.isEmpty { return "Me: " + calls.liveMe }
-        if let last = calls.transcript?.ordered.last { return "\(calls.label(for: last)): \(last.text)" }
-        return "Listening…"
     }
 
     private func shortName(_ name: String) -> String {
