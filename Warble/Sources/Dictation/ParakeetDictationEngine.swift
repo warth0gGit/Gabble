@@ -25,7 +25,7 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
     private let maxPhrase: TimeInterval = 20
     private let refreshInterval: Duration = .milliseconds(500)
 
-    private var audioEngine = AVAudioEngine()
+    private let microphone = MicrophoneCapture()
     private let audio = PhraseAudio(sampleRate: Double(ParakeetService.sampleRate))
     private var loopTask: Task<Void, Never>?
     private var finalText = ""
@@ -51,7 +51,7 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
         self.hints = hints
         audio.reset()
 
-        try startMicrophone()
+        try await startMicrophone()
         isRunning = true
         let interval = refreshInterval
         loopTask = Task { [weak self] in
@@ -134,62 +134,26 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
 
     // MARK: - Microphone
 
-    private func startMicrophone() throws {
-        // A fresh engine each time: a reused one keeps the old input format after
-        // a call app switches the microphone or its sample rate, and the tap fails.
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
-        audioEngine = AVAudioEngine()
-        let input = audioEngine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0,
-              let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+    private func startMicrophone() async throws {
+        guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: Double(ParakeetService.sampleRate),
-                                         channels: 1, interleaved: false),
-              let converter = AVAudioConverter(from: inputFormat, to: target) else {
+                                         channels: 1, interleaved: false) else {
             throw SpeechEngineError.microphoneUnavailable
         }
+        let reformatter = AudioReformatter(target: target)
+        let audio = audio
         let levelHandler: @Sendable (Double) -> Void = { [weak self] level in
             Task { @MainActor in self?.onLevel?(level) }
         }
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat,
-                         block: Self.makeTap(converter: converter, target: target,
-                                             audio: audio, level: levelHandler))
-        audioEngine.prepare()
-        try audioEngine.start()
+        try await microphone.start(deviceUID: MicrophoneChoice.saved()) { buffer in
+            guard let output = reformatter.convert(buffer), let data = output.floatChannelData?[0] else { return }
+            let samples = Array(UnsafeBufferPointer(start: data, count: Int(output.frameLength)))
+            levelHandler(Double(audio.append(samples)))
+        }
     }
 
     private func stopMicrophone() {
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
-    }
-
-    nonisolated private static func makeTap(
-        converter: AVAudioConverter,
-        target: AVAudioFormat,
-        audio: PhraseAudio,
-        level: @escaping @Sendable (Double) -> Void
-    ) -> AVAudioNodeTapBlock {
-        return { buffer, _ in
-            let ratio = target.sampleRate / buffer.format.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
-            guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-            var supplied = false
-            var error: NSError?
-            converter.convert(to: output, error: &error) { _, status in
-                if supplied {
-                    status.pointee = .noDataNow
-                    return nil
-                }
-                supplied = true
-                status.pointee = .haveData
-                return buffer
-            }
-            guard error == nil, output.frameLength > 0, let data = output.floatChannelData?[0] else { return }
-            let samples = Array(UnsafeBufferPointer(start: data, count: Int(output.frameLength)))
-            let rms = audio.append(samples)
-            level(Double(rms))
-        }
+        microphone.stop()
     }
 }
 

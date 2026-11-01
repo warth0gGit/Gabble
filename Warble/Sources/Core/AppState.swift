@@ -74,6 +74,10 @@ final class AppState: ObservableObject {
     @Published var speechAccent: SpeechAccent {
         didSet { defaults.set(speechAccent.rawValue, forKey: SpeechAccent.defaultsKey) }
     }
+    /// Microphone for dictation: MicrophoneChoice.builtIn, .systemDefault or a device UID.
+    @Published var microphone: String {
+        didSet { defaults.set(microphone, forKey: MicrophoneChoice.defaultsKey) }
+    }
     @Published var dictationKey: DictationKey {
         didSet { defaults.set(dictationKey.rawValue, forKey: Keys.dictationKey) }
     }
@@ -108,6 +112,7 @@ final class AppState: ObservableObject {
         recognitionModel = RecognitionModel(rawValue: defaults.string(forKey: Keys.recognitionModel) ?? "")
             ?? .appleOnDevice
         speechAccent = SpeechAccent.saved(in: defaults)
+        microphone = MicrophoneChoice.saved(in: defaults)
         dictationKey = DictationKey(rawValue: defaults.string(forKey: Keys.dictationKey) ?? "") ?? .fn
         liveTyping = defaults.object(forKey: Keys.liveTyping) as? Bool ?? true
         cleanupEnabled = defaults.object(forKey: Keys.cleanupEnabled) as? Bool ?? true

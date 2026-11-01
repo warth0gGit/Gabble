@@ -32,7 +32,7 @@ final class SpeechEngine {
     /// Called while the speech model downloads for the first time.
     var onPreparing: ((String) -> Void)?
 
-    private var audioEngine = AVAudioEngine()
+    private let microphone = MicrophoneCapture()
     private var analyzer: SpeechAnalyzer?
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var resultsTask: Task<Void, Never>?
@@ -105,11 +105,10 @@ final class SpeechEngine {
 
         do {
             try await analyzer.start(inputSequence: stream)
-            try startMicrophone(converting: analyzerFormat, into: continuation)
+            try await startMicrophone(converting: analyzerFormat, into: continuation)
         } catch {
             // Don't leave a half-started analyzer or microphone running.
-            audioEngine.inputNode.removeTap(onBus: 0)
-            audioEngine.stop()
+            microphone.stop()
             continuation.finish()
             inputContinuation = nil
             await analyzer.cancelAndFinishNow()
@@ -125,8 +124,7 @@ final class SpeechEngine {
     func stop() async -> String {
         guard isRunning else { return finalText }
         isRunning = false
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
+        microphone.stop()
         inputContinuation?.finish()
         inputContinuation = nil
         // Finishing normally takes a fraction of a second. If the speech model
@@ -153,8 +151,7 @@ final class SpeechEngine {
     func cancel() async {
         guard isRunning else { return }
         isRunning = false
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
+        microphone.stop()
         inputContinuation?.finish()
         inputContinuation = nil
         await analyzer?.cancelAndFinishNow()
@@ -164,65 +161,17 @@ final class SpeechEngine {
     }
 
     private func startMicrophone(converting target: AVAudioFormat,
-                                 into continuation: AsyncStream<AnalyzerInput>.Continuation) throws {
-        // A fresh audio engine every time. Calls (Teams, Zoom) often switch the
-        // microphone or its sample rate, e.g. a headset going into call mode, and an
-        // engine created earlier keeps the old format. Installing a tap with a stale
-        // format makes macOS end the app.
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
-        audioEngine = AVAudioEngine()
-        let input = audioEngine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0, let converter = AVAudioConverter(from: inputFormat, to: target) else {
-            throw SpeechEngineError.microphoneUnavailable
-        }
+                                 into continuation: AsyncStream<AnalyzerInput>.Continuation) async throws {
+        let reformatter = AudioReformatter(target: target)
         let levelHandler: @Sendable (Double) -> Void = { [weak self] level in
             Task { @MainActor in self?.onLevel?(level) }
         }
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat,
-                         block: Self.makeTap(converter: converter, target: target,
-                                             continuation: continuation, level: levelHandler))
-        audioEngine.prepare()
-        try audioEngine.start()
-    }
-
-    /// Built outside the main actor because audio arrives on a background thread.
-    nonisolated private static func makeTap(
-        converter: AVAudioConverter,
-        target: AVAudioFormat,
-        continuation: AsyncStream<AnalyzerInput>.Continuation,
-        level: @escaping @Sendable (Double) -> Void
-    ) -> AVAudioNodeTapBlock {
-        return { buffer, _ in
-            level(rms(of: buffer))
-
-            let ratio = target.sampleRate / buffer.format.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
-            guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-            var supplied = false
-            var error: NSError?
-            converter.convert(to: output, error: &error) { _, status in
-                if supplied {
-                    status.pointee = .noDataNow
-                    return nil
-                }
-                supplied = true
-                status.pointee = .haveData
-                return buffer
-            }
-            if error == nil, output.frameLength > 0 {
+        try await microphone.start(deviceUID: MicrophoneChoice.saved()) { buffer in
+            levelHandler(AudioReformatter.rms(of: buffer))
+            if let output = reformatter.convert(buffer) {
                 continuation.yield(AnalyzerInput(buffer: output))
             }
         }
-    }
-
-    nonisolated private static func rms(of buffer: AVAudioPCMBuffer) -> Double {
-        guard let data = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
-        let count = Int(buffer.frameLength)
-        var sum: Float = 0
-        for i in 0..<count { sum += data[i] * data[i] }
-        return Double(sqrt(sum / Float(count)))
     }
 
     nonisolated private static func join(_ a: String, _ b: String) -> String {

@@ -61,6 +61,7 @@ struct DictationView: View {
                     Label("**Tap** the key once to keep listening hands-free. Tap again to finish.", systemImage: "hand.tap")
                 }
                 .font(.callout)
+                MicrophonePicker(selection: $appState.microphone)
                 Toggle("Show words as I speak", isOn: $appState.liveTyping)
                 Text(appState.liveTyping
                      ? "In Mac apps like Notes and Mail, words appear in the text box while you talk, then get tidied up when you finish. In the Claude app, Slack, Teams and browsers, the tidied text is typed when you finish, because those apps can't swap words reliably."
@@ -688,5 +689,25 @@ struct ObsidianSection: View {
         if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "md.obsidian") {
             NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
         }
+    }
+}
+
+/// Lets you pick the microphone for dictation.
+struct MicrophonePicker: View {
+    @Binding var selection: String
+    @State private var devices: [InputDevice] = []
+
+    var body: some View {
+        Picker("Microphone", selection: $selection) {
+            Text("Mac's built-in microphone (recommended)").tag(MicrophoneChoice.builtIn)
+            Text("Same as Sound settings").tag(MicrophoneChoice.systemDefault)
+            ForEach(devices.filter { !$0.isBuiltIn }) { device in
+                Text(device.name).tag(device.uid)
+            }
+        }
+        .onAppear { devices = InputDevices.all() }
+        Text("The built-in microphone keeps working when AirPods are in, without switching them into call mode (which is slow and makes music sound like a phone call).")
+            .font(.callout)
+            .foregroundStyle(.secondary)
     }
 }

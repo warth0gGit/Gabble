@@ -107,3 +107,26 @@ final class RecognitionModelTests: XCTestCase {
         XCTAssertEqual(SpeechAccent.matchMac.locale, Locale.current)
     }
 }
+
+final class MicrophoneChoiceTests: XCTestCase {
+    private let builtIn = InputDevice(id: 1, uid: "BuiltInMicrophoneDevice", name: "MacBook Pro Microphone",
+                                      isBuiltIn: true, isBluetooth: false)
+    private let airPods = InputDevice(id: 2, uid: "AA-BB:input", name: "Jonny's AirPods Pro",
+                                      isBuiltIn: false, isBluetooth: true)
+
+    func testDefaultsToBuiltIn() {
+        let defaults = UserDefaults(suiteName: "warble-tests-\(UUID().uuidString)")!
+        XCTAssertEqual(MicrophoneChoice.saved(in: defaults), MicrophoneChoice.builtIn)
+    }
+
+    func testPicksTheRightDevice() {
+        let devices = [airPods, builtIn]
+        XCTAssertEqual(MicrophoneChoice.device(for: MicrophoneChoice.builtIn, in: devices), builtIn)
+        XCTAssertNil(MicrophoneChoice.device(for: MicrophoneChoice.systemDefault, in: devices))
+        XCTAssertEqual(MicrophoneChoice.device(for: airPods.uid, in: devices), airPods)
+        // A chosen microphone that isn't connected falls back to the Mac's default.
+        XCTAssertNil(MicrophoneChoice.device(for: airPods.uid, in: [builtIn]))
+        // A Mac with no built-in microphone (a Mac mini) uses the default.
+        XCTAssertNil(MicrophoneChoice.device(for: MicrophoneChoice.builtIn, in: [airPods]))
+    }
+}
