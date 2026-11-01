@@ -6,6 +6,8 @@ struct CallTranscript: Equatable {
         var offset: TimeInterval   // seconds since the call started
         var speaker: String
         var text: String
+        /// Exactly when it was spoken, if known (Parakeet's re-read of the recording gives this).
+        var spoken: ClosedRange<TimeInterval>? = nil
     }
 
     var appName: String
@@ -34,6 +36,7 @@ struct CallTranscript: Equatable {
     /// Roughly when a phrase was spoken. Phrases are reported just after they
     /// finish, so they span a little before their offset.
     static func spokenRange(of segment: Segment) -> ClosedRange<TimeInterval> {
+        if let spoken = segment.spoken { return spoken }
         let words = Double(segment.text.split(separator: " ").count)
         let end = max(0, segment.offset - 0.8)
         let start = max(0, end - max(1.0, words * 0.38))

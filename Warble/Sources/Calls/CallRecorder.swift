@@ -88,6 +88,17 @@ final class CallRecorder {
         return transcript
     }
 
+    /// Both recordings, labelled, with where each starts on the transcript's clock.
+    /// Used to re-read the call with Parakeet once it ends.
+    var recordings: [CallRetranscriber.Recording] {
+        let sides: [(AudioFileWriter, String)] = [(micWriter, Self.meLabel), (callWriter, Self.othersLabel)]
+        return sides.compactMap { (writer, label) -> CallRetranscriber.Recording? in
+            guard let first = writer.firstWrite else { return nil }
+            return CallRetranscriber.Recording(file: writer.fileURL, speaker: label,
+                                               startOffset: first.timeIntervalSince(transcript.started))
+        }
+    }
+
     private func add(_ speaker: String, _ text: String) {
         transcript.add(speaker: speaker, text: text, at: Date())
         publish()
@@ -112,13 +123,24 @@ final class AudioFileWriter: @unchecked Sendable {
     private var file: AVAudioFile?
     private let lock = NSLock()
     private var closed = false
+    private var started: Date?
 
     init(url: URL) { self.url = url }
+
+    var fileURL: URL { url }
+
+    /// When the first audio arrived; the file's timeline starts here.
+    var firstWrite: Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return started
+    }
 
     func write(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         defer { lock.unlock() }
         guard !closed else { return }
+        if started == nil { started = Date() }
         if file == nil {
             file = try? AVAudioFile(forWriting: url, settings: buffer.format.settings,
                                     commonFormat: buffer.format.commonFormat,

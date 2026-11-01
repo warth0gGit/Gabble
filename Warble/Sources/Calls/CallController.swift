@@ -134,6 +134,10 @@ final class CallController: ObservableObject {
         transcript = recorder.transcript
         recordingStarted = Date()
         state = .recording(appName: app.name)
+        if appState.recognitionModel == .parakeet {
+            // Have Parakeet ready by the time the call ends.
+            ParakeetStatus.shared.warmUp()
+        }
         do {
             try await recorder.start(hints: lexicon.recognitionHints, knownVoices: voices.voices)
         } catch {
@@ -152,6 +156,9 @@ final class CallController: ObservableObject {
         var finished = await recorder.stop()
         self.recorder = nil
         askingWho = nil
+        if appState.recognitionModel == .parakeet {
+            finished = await retranscribe(finished, recordings: recorder.recordings)
+        }
         finished.relabel { [self] segment in label(for: segment) }
         recordingStarted = nil
         liveMe = ""
@@ -176,6 +183,24 @@ final class CallController: ObservableObject {
             state = .idle
             showErrorBriefly()
         }
+    }
+
+    /// Swaps the live transcript for Parakeet's re-read of the recordings.
+    /// If Parakeet isn't available, the live transcript is kept.
+    private func retranscribe(_ transcript: CallTranscript,
+                              recordings: [CallRetranscriber.Recording]) async -> CallTranscript {
+        var segments: [CallTranscript.Segment] = []
+        do {
+            for recording in recordings {
+                segments += try await CallRetranscriber.segments(for: recording, terms: lexicon.recognitionHints)
+            }
+        } catch {
+            return transcript
+        }
+        guard !segments.isEmpty else { return transcript }
+        var updated = transcript
+        updated.segments = segments
+        return updated
     }
 
     // MARK: - Voices

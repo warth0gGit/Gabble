@@ -203,3 +203,19 @@ final class SpeechEngine {
         return left + " " + right
     }
 }
+
+/// What dictation needs from a speech engine. Apple's (`SpeechEngine`) and
+/// Parakeet (`ParakeetDictationEngine`) both provide it, so Settings can switch.
+@MainActor
+protocol DictationSpeechEngine: AnyObject {
+    var onPartial: ((String) -> Void)? { get set }
+    var onFinalSegment: ((String) -> Void)? { get set }
+    var onVolatileSegment: ((String) -> Void)? { get set }
+    var onLevel: ((Double) -> Void)? { get set }
+    var onPreparing: ((String) -> Void)? { get set }
+    func start(hints: [String]) async throws
+    func stop() async -> String
+    func cancel() async
+}
+
+extension SpeechEngine: DictationSpeechEngine {}

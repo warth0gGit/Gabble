@@ -25,7 +25,11 @@ final class DictationController: ObservableObject {
 
     private let appState: AppState
     private let lexicon: LexiconStore
-    private let engine = SpeechEngine()
+    private let appleEngine = SpeechEngine()
+    private let parakeetEngine = ParakeetDictationEngine()
+    /// Chosen in Settings; fixed for the length of each dictation.
+    private var usingParakeet = false
+    private var engine: DictationSpeechEngine { usingParakeet ? parakeetEngine : appleEngine }
     private let hotkey = HotkeyMonitor()
     private let correctionWatcher = CorrectionWatcher()
     private var hud: DictationHUD?
@@ -44,11 +48,13 @@ final class DictationController: ObservableObject {
         self.appState = appState
         self.lexicon = lexicon
 
-        engine.onPartial = { [weak self] text in self?.liveText = text }
-        engine.onLevel = { [weak self] level in self?.level = level }
-        engine.onFinalSegment = { [weak self] phrase in self?.typeFinal(phrase) }
-        engine.onVolatileSegment = { [weak self] words in self?.typeVolatile(words) }
-        engine.onPreparing = { [weak self] message in self?.phase = .preparing(message) }
+        for engine in [appleEngine, parakeetEngine] as [DictationSpeechEngine] {
+            engine.onPartial = { [weak self] text in self?.liveText = text }
+            engine.onLevel = { [weak self] level in self?.level = level }
+            engine.onFinalSegment = { [weak self] phrase in self?.typeFinal(phrase) }
+            engine.onVolatileSegment = { [weak self] words in self?.typeVolatile(words) }
+            engine.onPreparing = { [weak self] message in self?.phase = .preparing(message) }
+        }
 
         hotkey.onPress = { [weak self] in self?.keyPressed() }
         hotkey.onRelease = { [weak self] in self?.keyReleased() }
@@ -125,8 +131,15 @@ final class DictationController: ObservableObject {
         typer = LivePhraseTyper()
         isLiveTyping = appState.liveTyping && testSink == nil
         phase = .preparing("Starting…")
+        usingParakeet = appState.recognitionModel == .parakeet
         do {
-            try await engine.start(hints: lexicon.recognitionHints)
+            do {
+                try await engine.start(hints: lexicon.recognitionHints)
+            } catch where usingParakeet {
+                // If Parakeet can't load (say, the download failed), use Apple's engine this time.
+                usingParakeet = false
+                try await engine.start(hints: lexicon.recognitionHints)
+            }
             startedAt = Date()
             phase = .listening
             // The key may have been released while the engine was starting.
