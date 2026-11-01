@@ -29,7 +29,7 @@ final class CallRecorder {
         let started = Date()
         transcript = CallTranscript(appName: app.name, started: started)
         speakers = SpeakerIdentifier(origin: started)
-        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let stamp = CallTranscript.isoFormatter.string(from: started).replacingOccurrences(of: ":", with: "-")
         folder = recordingsFolder.appendingPathComponent(stamp, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         micWriter = AudioFileWriter(url: folder.appendingPathComponent("me.caf"))

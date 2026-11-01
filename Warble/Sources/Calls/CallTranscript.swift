@@ -184,6 +184,7 @@ struct CallTranscript: Equatable {
     private static let titleFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .autoupdatingCurrent
         f.dateFormat = "MMM d, yyyy, h:mm a"
         return f
     }()
@@ -191,6 +192,7 @@ struct CallTranscript: Equatable {
     private static let fileFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .autoupdatingCurrent
         f.dateFormat = "yyyy-MM-dd HHmm"
         return f
     }()
@@ -202,12 +204,13 @@ struct CallTranscript: Equatable {
         return f
     }()
 
-    /// The Mac's local time (e.g. 2026-10-31T20:55:01), never UTC. Obsidian
+    /// The Mac's current time zone (e.g. 2026-10-31T20:55:01), never UTC. It
+    /// follows the Mac's clock when you travel, even if Warble stays open. Obsidian
     /// reads this as a date and time and shows it as you'd expect.
     static let isoFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = .current
+        f.timeZone = .autoupdatingCurrent
         f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
         return f
     }()
