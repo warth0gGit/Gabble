@@ -190,8 +190,9 @@ final class CallDetectorTests: XCTestCase {
         let (d, events) = detector()
         let t = Date()
         d.update(users: [teams], now: t)
+        d.update(users: [teams], now: t.addingTimeInterval(9))
         d.update(users: [], now: t.addingTimeInterval(10))
-        d.update(users: [], now: t.addingTimeInterval(13))
+        d.update(users: [], now: t.addingTimeInterval(13))   // 4 s quiet: AirPods switching
         d.update(users: [teams], now: t.addingTimeInterval(14))
         XCTAssertEqual(events(), ["start Microsoft Teams"])
     }
