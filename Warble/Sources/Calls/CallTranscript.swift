@@ -1,0 +1,136 @@
+import Foundation
+
+/// A finished or in-progress call transcript. Pure data, unit tested.
+struct CallTranscript: Equatable {
+    struct Segment: Equatable {
+        var offset: TimeInterval   // seconds since the call started
+        var speaker: String
+        var text: String
+        /// Exactly when it was spoken, if known (Parakeet's re-read of the recording gives this).
+        var spoken: ClosedRange<TimeInterval>? = nil
+    }
+
+    var appName: String
+    var started: Date
+    var ended: Date?
+    var segments: [Segment] = []
+    var category: String = "Unfiled"
+
+    var speakers: [String] {
+        var seen: [String] = []
+        for s in segments where !seen.contains(s.speaker) { seen.append(s.speaker) }
+        return seen
+    }
+
+    var duration: TimeInterval { (ended ?? Date()).timeIntervalSince(started) }
+
+    var plainText: String { segments.map(\.text).joined(separator: "\n") }
+
+    /// Adds a phrase as it is recognised. Phrases are kept separate so each can
+    /// be matched to the right voice later; they are merged when rendered.
+    mutating func add(speaker: String, text: String, at date: Date) {
+        let offset = max(0, date.timeIntervalSince(started))
+        segments.append(Segment(offset: offset, speaker: speaker, text: text))
+    }
+
+    /// Roughly when a phrase was spoken. Phrases are reported just after they
+    /// finish, so they span a little before their offset.
+    static func spokenRange(of segment: Segment) -> ClosedRange<TimeInterval> {
+        if let spoken = segment.spoken { return spoken }
+        let words = Double(segment.text.split(separator: " ").count)
+        let end = max(0, segment.offset - 0.8)
+        let start = max(0, end - max(1.0, words * 0.38))
+        return start...max(start, end)
+    }
+
+    /// Segments sorted by time, so lines from both sides interleave correctly.
+    var ordered: [Segment] { segments.sorted { $0.offset < $1.offset } }
+
+    /// Consecutive phrases from the same person joined into one line.
+    var merged: [Segment] {
+        var result: [Segment] = []
+        for segment in ordered {
+            if let last = result.last, last.speaker == segment.speaker, segment.offset - last.offset < 45 {
+                result[result.count - 1].text += " " + segment.text
+            } else {
+                result.append(segment)
+            }
+        }
+        return result
+    }
+
+    /// Renames speakers, e.g. "Others" phrases to the person recognised by voice.
+    mutating func relabel(_ label: (Segment) -> String) {
+        segments = segments.map { segment in
+            var s = segment
+            s.speaker = label(segment)
+            return s
+        }
+    }
+
+    var title: String {
+        "\(shortAppName) call \(Self.titleFormatter.string(from: started))"
+    }
+
+    var shortAppName: String {
+        appName.replacingOccurrences(of: "Microsoft ", with: "").replacingOccurrences(of: "Google ", with: "")
+    }
+
+    /// File name, safe for every file system, e.g. "2026-10-31 1400 Teams call.md".
+    var fileName: String {
+        "\(Self.fileFormatter.string(from: started)) \(shortAppName) call.md"
+    }
+
+    /// Markdown with YAML front matter, ready for Obsidian.
+    var markdown: String {
+        var lines: [String] = ["---"]
+        lines.append("title: \(yaml(title))")
+        lines.append("date: \(Self.isoFormatter.string(from: started))")
+        if let ended { lines.append("ended: \(Self.isoFormatter.string(from: ended))") }
+        lines.append("duration_minutes: \(Int((duration / 60).rounded()))")
+        lines.append("app: \(yaml(appName))")
+        lines.append("speakers: [\(speakers.map(yaml).joined(separator: ", "))]")
+        lines.append("category: \(yaml(category))")
+        lines.append("tags: [call, warble]")
+        lines.append("---")
+        lines.append("")
+        lines.append("# \(title)")
+        lines.append("")
+        for segment in merged {
+            lines.append("**\(segment.speaker)** (\(Self.timestamp(segment.offset))): \(segment.text)")
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func timestamp(_ offset: TimeInterval) -> String {
+        let total = Int(offset)
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
+    }
+
+    private func yaml(_ value: String) -> String {
+        let needsQuotes = value.contains { ":#[]{},&*!|>'\"%@`".contains($0) } || value.hasPrefix(" ")
+        return needsQuotes ? "\"" + value.replacingOccurrences(of: "\"", with: "\\\"") + "\"" : value
+    }
+
+    private static let titleFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_GB")
+        f.dateFormat = "d MMM yyyy, HH:mm"
+        return f
+    }()
+
+    private static let fileFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HHmm"
+        return f
+    }()
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+}

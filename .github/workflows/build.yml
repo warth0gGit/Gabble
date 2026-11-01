@@ -1,0 +1,82 @@
+name: Build Warble
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Run tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Warble.xcodeproj \
+            -scheme Warble \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            | tee test.log | grep -E "error:|warning: |Test Case|Executed|\*\* TEST" || true
+          grep -q "\*\* TEST SUCCEEDED \*\*" test.log
+
+      - name: Build app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Warble.xcodeproj \
+            -scheme Warble \
+            -configuration Release \
+            -derivedDataPath build \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            | tee build.log | grep -E "error:|\*\* BUILD" || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
+          BUILD=$(grep -E 'CURRENT_PROJECT_VERSION:' project.yml | head -1 | grep -oE '[0-9]+')
+          echo "BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent build/Build/Products/Release/Warble.app "Warble$BUILD.zip"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: "*.log"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Warble${{ env.BUILD_NUMBER }}
+          path: Warble*.zip
+
+      - name: Publish download link
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/project-thread-anfie7')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build "Warble${BUILD_NUMBER}.zip" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Warble build ${BUILD_NUMBER}" \
+            --notes "Build ${BUILD_NUMBER}, made automatically from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Download Warble${BUILD_NUMBER}.zip, unzip it and drag Warble into Applications. See the README for first-launch steps."
