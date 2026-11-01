@@ -99,20 +99,20 @@ enum SmartCleanup {
     ("three pm" becomes "3pm", "twenty five percent" becomes "25%").
     - When the speaker lists several items or steps, put them on separate lines as a numbered or \
     bulleted list.
-    - Keep the speaker's meaning, tone and level of detail. Do not add information, summarise, or \
+    - Keep the speaker's meaning, tone and level of detail. Do not add information, summarize, or \
     swap their words for fancier ones.
     - Spell the terms in the word list exactly as written there. The transcript comes from speech \
     recognition, so a word-list term is sometimes heard as a sound-alike word: "clawed" or "cloud" for \
     "Claude", "sass" for "SaaS". Swap in the word-list term when a word sounds like it and the context \
-    shows the term was meant ("ask clawed to summarise it" becomes "ask Claude to summarise it").
+    shows the term was meant ("ask clawed to summarize it" becomes "ask Claude to summarize it").
 
     Examples:
 
     Transcript: um so I was thinking we could uh meet on tuesday no wait wednesday at like three to go over the the Q3 numbers
     Edited: I was thinking we could meet on Wednesday at 3 to go over the Q3 numbers.
 
-    Transcript: can you summarise this document for me and uh make it a bit shorter
-    Edited: Can you summarise this document for me and make it a bit shorter?
+    Transcript: can you summarize this document for me and uh make it a bit shorter
+    Edited: Can you summarize this document for me and make it a bit shorter?
 
     Transcript: the things I need from you are first the budget second the timeline and third the list of attendees thanks
     Edited: The things I need from you are:
@@ -163,10 +163,7 @@ enum SmartCleanup {
     /// (for example, the model replying to a question instead of tidying it).
     static func validated(_ output: String, original: String) -> String? {
         var result = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        for prefix in ["Edited text:", "Edited:", "Cleaned text:", "Cleaned:", "Here is the edited text:", "Here is the cleaned text:", "Output:"]
-        where result.lowercased().hasPrefix(prefix.lowercased()) {
-            result = String(result.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        result = strippingChatter(result, original: original)
         if result.count >= 2, result.first == "\"", result.last == "\"", original.first != "\"" {
             result = String(result.dropFirst().dropLast())
         }
@@ -176,6 +173,47 @@ enum SmartCleanup {
         if original.count <= 40, result.count > original.count + 40 { return nil }
         return result
     }
+}
+
+extension SmartCleanup {
+    /// Words the model opens with when it chats instead of just answering.
+    private static let chattyOpeners = [
+        "sure", "certainly", "of course", "okay", "ok", "absolutely", "here", "here's", "here is",
+        "below", "edited", "cleaned", "the edited", "the cleaned", "output", "result", "i've", "i have",
+    ]
+
+    /// Removes an opening line like "Sure, here's the edited text:" or
+    /// "Edited:" that the model sometimes puts before the answer, unless you
+    /// actually said those words. Pure, unit tested.
+    static func strippingChatter(_ text: String, original: String) -> String {
+        var result = text
+        let spoken = original.lowercased()
+        for _ in 0..<2 {
+            let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            // The opener runs up to the first colon, on the first line.
+            let firstLine = trimmed.prefix { $0 != "\n" }
+            guard let colon = firstLine.firstIndex(of: ":") else { break }
+            let opener = String(trimmed[..<colon])
+            let lower = opener.lowercased()
+            let words = lower.split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "\u{2019}" })
+            guard words.count <= 8,
+                  chattyOpeners.contains(where: { lower.hasPrefix($0) }),
+                  lower.contains("text") || lower.contains("version") || lower.contains("edited")
+                    || lower.contains("cleaned") || lower.contains("output") || lower.contains("result")
+                    || words.count <= 2,
+                  !spoken.contains(words.prefix(3).joined(separator: " ")) else { break }
+            result = String(trimmed[trimmed.index(after: colon)...])
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// What Apple Intelligence fills in for a tidy-up. Guided generation makes it
+/// answer in exactly this shape, so it can't chat before or after the text.
+@Generable
+struct CleanedDictation {
+    @Guide(description: "The edited dictation only, exactly as it should be typed. No preamble, labels, quotes or notes.")
+    var text: String
 }
 
 /// One tidy-up's Apple Intelligence session. It is created and warmed up when
@@ -196,8 +234,9 @@ final class CleanupSession: @unchecked Sendable {
         guard !text.isEmpty else { return .failure(CleanupFailure(reason: "nothing to tidy.")) }
         do {
             let response = try await session.respond(to: SmartCleanup.prompt(for: text, terms: terms, style: style),
+                                                     generating: CleanedDictation.self,
                                                      options: GenerationOptions(temperature: 0.1))
-            guard let result = SmartCleanup.validated(response.content, original: text) else {
+            guard let result = SmartCleanup.validated(response.content.text, original: text) else {
                 return .failure(CleanupFailure(reason: "Apple Intelligence's answer didn't look like your words, so Warble kept the original."))
             }
             return .success(result)

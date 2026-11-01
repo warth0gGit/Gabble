@@ -103,6 +103,31 @@ final class SmartCleanupTests: XCTestCase {
                        "Let's meet Wednesday.")
     }
 
+    func testStripsChattyOpener() {
+        let spoken = "I'm gonna test this real quick to see if it works"
+        XCTAssertEqual(SmartCleanup.validated("Sure, here's the edited text:\n\nI'm gonna test this real quick to see if it works.",
+                                              original: spoken),
+                       "I'm gonna test this real quick to see if it works.")
+        XCTAssertEqual(SmartCleanup.strippingChatter("Certainly! Here is the cleaned version: Hello there.", original: "hello there"),
+                       "Hello there.")
+        XCTAssertEqual(SmartCleanup.strippingChatter("Edited: Hi.", original: "hi"), "Hi.")
+    }
+
+    func testKeepsColonsTheSpeakerMeant() {
+        XCTAssertEqual(SmartCleanup.strippingChatter("Here's the plan: we ship on Friday.",
+                                                     original: "here's the plan we ship on friday"),
+                       "Here's the plan: we ship on Friday.")
+        XCTAssertEqual(SmartCleanup.strippingChatter("Okay team: let's start.", original: "um okay team let's start"),
+                       "Okay team: let's start.")
+        XCTAssertEqual(SmartCleanup.strippingChatter("Note: the office is closed.", original: "note the office is closed"),
+                       "Note: the office is closed.")
+    }
+
+    func testExamplesUseAmericanSpelling() {
+        XCTAssertFalse(SmartCleanup.instructions.contains("summarise"))
+        XCTAssertTrue(SmartCleanup.instructions.contains("American English spelling"))
+    }
+
     func testDeadlineGrowsWithLengthButIsCapped() {
         XCTAssertEqual(SmartCleanup.deadline(forWords: 0), 6)
         XCTAssertGreaterThan(SmartCleanup.deadline(forWords: 80), 6 + 5)
