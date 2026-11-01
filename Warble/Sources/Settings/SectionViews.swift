@@ -164,7 +164,7 @@ struct DictationView: View {
                 }
                 if appState.cleanupEnabled, let outcome = dictation.lastCleanup {
                     switch outcome {
-                    case .smart:
+                    case .smart, .quick:
                         Label(outcome.summary, systemImage: "sparkles")
                             .font(.callout)
                             .foregroundStyle(.secondary)
@@ -173,6 +173,11 @@ struct DictationView: View {
                             .font(.callout)
                             .foregroundStyle(.orange)
                     }
+                }
+                if let timing = dictation.lastTiming {
+                    Label(timing.summary, systemImage: "stopwatch")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
                 if let note = dictation.lastNote {
                     Label(note, systemImage: "info.circle")

@@ -27,6 +27,8 @@ final class DictationController: ObservableObject {
     @Published private(set) var lastCleanup: CleanupOutcome?
     /// A one-off note about the last dictation, e.g. that Parakeet was still loading.
     @Published private(set) var lastNote: String?
+    /// How long the last dictation took to appear after you stopped talking.
+    @Published private(set) var lastTiming: DictationTiming?
     /// When set, the result goes here instead of being typed (used by the "Try it" box).
     var testSink: ((String) -> Void)?
 
@@ -214,7 +216,9 @@ final class DictationController: ObservableObject {
         usingParakeet = appState.recognitionModel == .parakeet
         if appState.cleanupEnabled && SmartCleanup.isAvailable {
             let cleanup = CleanupSession()
-            cleanup.prewarm()
+            // Load the model and have it read the instructions, style and Word
+            // List while you talk, so only your words are left when you stop.
+            cleanup.prewarm(terms: lexicon.recognitionHints, style: WritingStyle.forApp(bundleID: targetBundleID))
             cleanupSession = cleanup
         } else {
             cleanupSession = nil
@@ -257,6 +261,7 @@ final class DictationController: ObservableObject {
     func finish() async {
         guard phase == .listening else { return }
         let mine = session
+        let stoppedAt = Date()
         phase = .processing
         // Finishing normally takes well under a second. If the speech engine
         // stalls, cancel it and keep what was heard, so Warble never gets stuck.
@@ -277,8 +282,11 @@ final class DictationController: ObservableObject {
             phase = .idle
             return
         }
+        let heardAt = Date()
         let cleaned = await cleanUp(raw)
         guard mine == session else { return }
+        lastTiming = DictationTiming(speech: heardAt.timeIntervalSince(stoppedAt),
+                                     tidy: Date().timeIntervalSince(heardAt))
 
         if isLiveTyping && !typedSoFar.isEmpty {
             // Words are already in the field; swap in the tidied version if it differs.
@@ -347,6 +355,11 @@ final class DictationController: ObservableObject {
             lastCleanup = .skipped(reason: SmartCleanup.unavailableReason ?? "Apple Intelligence isn't available.")
             return basic
         }
+        // "Sounds good, see you then." doesn't need a second's wait.
+        if SmartCleanup.isAlreadyTidy(raw: raw, basic: basic) {
+            lastCleanup = .quick
+            return basic
+        }
         let style = WritingStyle.forApp(bundleID: targetBundleID)
         let terms = lexicon.recognitionHints
         let cleanup = warmed ?? CleanupSession()
@@ -395,5 +408,18 @@ final class DictationController: ObservableObject {
             if hud == nil { hud = DictationHUD(controller: self) }
             hud?.show()
         }
+    }
+}
+
+/// Where the wait went between you stopping and your text appearing.
+struct DictationTiming: Equatable {
+    /// Finishing the speech recognition.
+    var speech: Double
+    /// The tidy-up.
+    var tidy: Double
+
+    var summary: String {
+        String(format: "Text was ready %.1f s after you stopped (speech %.1f s, tidy-up %.1f s).",
+               speech + tidy, speech, tidy)
     }
 }

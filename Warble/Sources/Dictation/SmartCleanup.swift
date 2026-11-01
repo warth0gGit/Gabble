@@ -32,12 +32,16 @@ enum WritingStyle: String {
 /// tidy-up is never a mystery.
 enum CleanupOutcome: Equatable {
     case smart(seconds: Double)
+    /// Short and already clean, so Warble didn't wait for Apple Intelligence.
+    case quick
     case skipped(reason: String)
 
     var summary: String {
         switch self {
         case .smart(let seconds):
             return String(format: "Last dictation was tidied by Apple Intelligence in %.1f s.", seconds)
+        case .quick:
+            return "Last dictation was short and already tidy, so it went straight in."
         case .skipped(let reason):
             return "Last dictation got the basic tidy-up only: \(reason)"
         }
@@ -128,12 +132,42 @@ enum SmartCleanup {
 
     /// Builds the prompt for one dictation. Pure, unit tested.
     static func prompt(for text: String, terms: [String], style: WritingStyle) -> String {
+        promptPrefix(terms: terms, style: style) + "\(text)\nEdited:"
+    }
+
+    /// Everything in the prompt before your words. Known as soon as you start
+    /// talking, so Apple Intelligence reads it while you speak.
+    static func promptPrefix(terms: [String], style: WritingStyle) -> String {
         var prompt = "Style: \(style.guidance)\n"
         if !terms.isEmpty {
             prompt += "Word list: \(terms.prefix(150).joined(separator: ", "))\n"
         }
-        prompt += "Transcript: \(text)\nEdited:"
-        return prompt
+        return prompt + "Transcript: "
+    }
+
+    /// Words that mean a dictation needs Apple Intelligence: corrections,
+    /// spoken numbers, lists and verbal tics the basic tidy-up can't handle.
+    private static let needsModelWords: Set<String> = [
+        "no", "not", "actually", "wait", "sorry", "mean", "scratch", "scrap", "rather", "instead", "correction",
+        "like", "know", "sort", "kind", "basically", "literally", "anyway",
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+        "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand",
+        "million", "billion", "percent", "half", "quarter", "dollars", "pounds", "pm", "am", "o'clock",
+        "first", "second", "third", "firstly", "secondly", "lastly", "finally", "bullet", "list",
+        "colon", "comma", "period", "dash", "quote",
+    ]
+
+    /// True when a dictation is short and has nothing for Apple Intelligence to
+    /// fix, so the basic tidy-up can go straight in with no wait. Pure, unit tested.
+    static func isAlreadyTidy(raw: String, basic: String) -> Bool {
+        let words = basic.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "\u{2019}" })
+        guard !words.isEmpty, words.count <= 10 else { return false }
+        let rawWords = raw.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "\u{2019}" })
+        // Anything the basic tidy-up removed (fillers, stutters) is fine; a
+        // repeated word left in, or any cue word, needs the model.
+        for (a, b) in zip(words, words.dropFirst()) where a == b { return false }
+        return !rawWords.contains { needsModelWords.contains(String($0)) }
     }
 
     /// Plain-English reason for a model error, for the Settings page.
@@ -226,8 +260,9 @@ final class CleanupSession: @unchecked Sendable {
         session = LanguageModelSession(model: SmartCleanup.model, instructions: SmartCleanup.instructions)
     }
 
-    func prewarm() {
-        session.prewarm()
+    func prewarm(terms: [String], style: WritingStyle) {
+        let prefix = SmartCleanup.promptPrefix(terms: terms, style: style)
+        session.prewarm(promptPrefix: Prompt { prefix })
     }
 
     func clean(_ text: String, terms: [String], style: WritingStyle) async -> Result<String, CleanupFailure> {

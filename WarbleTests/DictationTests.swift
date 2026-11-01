@@ -128,6 +128,29 @@ final class SmartCleanupTests: XCTestCase {
         XCTAssertTrue(SmartCleanup.instructions.contains("American English spelling"))
     }
 
+    func testShortCleanDictationsSkipTheModel() {
+        XCTAssertTrue(SmartCleanup.isAlreadyTidy(raw: "sounds good see you then", basic: "Sounds good see you then"))
+        XCTAssertTrue(SmartCleanup.isAlreadyTidy(raw: "um thanks Shadee", basic: "Thanks Shadee"))
+        // Corrections, numbers and verbal tics still go to Apple Intelligence.
+        XCTAssertFalse(SmartCleanup.isAlreadyTidy(raw: "meet tuesday no wednesday", basic: "Meet tuesday no wednesday"))
+        XCTAssertFalse(SmartCleanup.isAlreadyTidy(raw: "build twenty is ready", basic: "Build twenty is ready"))
+        XCTAssertFalse(SmartCleanup.isAlreadyTidy(raw: "it's like really good", basic: "It's like really good"))
+        // Long dictations always do.
+        let long = Array(repeating: "word", count: 11).joined(separator: " ")
+        XCTAssertFalse(SmartCleanup.isAlreadyTidy(raw: long, basic: long))
+    }
+
+    func testPromptStartsWithThePrewarmedPrefix() {
+        let prefix = SmartCleanup.promptPrefix(terms: ["Claude"], style: .chat)
+        XCTAssertTrue(SmartCleanup.prompt(for: "hi there", terms: ["Claude"], style: .chat).hasPrefix(prefix))
+        XCTAssertTrue(prefix.hasSuffix("Transcript: "))
+    }
+
+    func testTimingSummary() {
+        XCTAssertEqual(DictationTiming(speech: 0.2, tidy: 1.3).summary,
+                       "Text was ready 1.5 s after you stopped (speech 0.2 s, tidy-up 1.3 s).")
+    }
+
     func testDeadlineGrowsWithLengthButIsCapped() {
         XCTAssertEqual(SmartCleanup.deadline(forWords: 0), 6)
         XCTAssertGreaterThan(SmartCleanup.deadline(forWords: 80), 6 + 5)
