@@ -132,7 +132,8 @@ final class EngineBenchmark: ObservableObject {
             } catch {
                 problems.append("Apple: \(error.localizedDescription)")
             }
-            phase = .analysing(round == 1 && !(await ParakeetService.shared.isReady)
+            let parakeetReady = await ParakeetService.shared.isReady
+            phase = .analysing(round == 1 && !parakeetReady
                 ? "Parakeet, round 1 of 2 (loading the model first)…"
                 : "Parakeet, round \(round) of 2…")
             do {
