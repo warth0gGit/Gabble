@@ -13,7 +13,10 @@ final class DictationController: ObservableObject {
         case processing
     }
 
-    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var phase: Phase = .idle {
+        didSet { if phase != oldValue { phaseChangedAt = Date() } }
+    }
+    private var phaseChangedAt = Date()
     @Published private(set) var level: Double = 0
     @Published private(set) var liveText = ""
     @Published private(set) var startedAt: Date?
@@ -98,6 +101,10 @@ final class DictationController: ObservableObject {
             stopPressedAt = Date()
             return
         }
+        if isStuck {
+            Task { await cancel() }
+            return
+        }
         guard phase == .idle else { return }
         pressedAt = Date()
         isHandsFree = false
@@ -135,7 +142,17 @@ final class DictationController: ObservableObject {
             Task { await start(handsFree: true) }
         } else if phase == .listening {
             Task { await finish() }
+        } else if isStuck {
+            Task { await cancel() }
         }
+    }
+
+    /// True when starting or finishing has taken far longer than it should.
+    /// Clicking the menu bar icon or pressing the key then resets dictation.
+    private var isStuck: Bool {
+        guard phase != .idle, phase != .listening else { return false }
+        if case .preparing(let message) = phase, message.contains("download") { return false }
+        return Date().timeIntervalSince(phaseChangedAt) > 10
     }
 
     func start(handsFree: Bool) async {
@@ -176,7 +193,17 @@ final class DictationController: ObservableObject {
     func finish() async {
         guard phase == .listening else { return }
         phase = .processing
-        let raw = await engine.stop()
+        // Finishing normally takes well under a second. If the speech engine
+        // stalls, cancel it and keep what was heard, so Warble never gets stuck.
+        let stopping = engine
+        let heard = liveText
+        let raw: String
+        if let finished = await withDeadline(seconds: 6, { await stopping.stop() }) {
+            raw = finished
+        } else {
+            await stopping.cancel()
+            raw = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         startedAt = nil
         isHandsFree = false
         guard !raw.isEmpty else {
@@ -228,11 +255,12 @@ final class DictationController: ObservableObject {
 
     func cancel() async {
         isLiveTyping = false
-        await engine.cancel()
         startedAt = nil
         isHandsFree = false
         pressedAt = nil
+        stopPressedAt = nil
         phase = .idle
+        await engine.cancel()
     }
 
     // MARK: - Cleanup and delivery

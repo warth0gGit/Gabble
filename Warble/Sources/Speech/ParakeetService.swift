@@ -15,6 +15,7 @@ actor ParakeetService {
     private var ctcModels: CtcModels?
     private var boosting: (terms: [String], session: VocabularyBoostingSession)?
     private var boostingFailed = false
+    private var ctcLoading: Task<Void, Never>?
 
     /// English-only Parakeet is best at rare words and names; Ultra covers 25 languages.
     static var version: AsrModelVersion {
@@ -89,14 +90,23 @@ actor ParakeetService {
     private func session(for terms: [String]) async -> VocabularyBoostingSession? {
         if let boosting, boosting.terms == terms { return boosting.session }
         guard !boostingFailed else { return nil }
-        do {
-            let models: CtcModels
-            if let ctcModels {
-                models = ctcModels
-            } else {
-                models = try await CtcModels.downloadAndLoad(variant: .ctc110m)
-                ctcModels = models
+        // The vocabulary model downloads (about 100 MB) the first time a Word List
+        // term is used. Never make dictation wait for that: fetch it in the
+        // background and boost once it's here.
+        guard let models = ctcModels else {
+            if ctcLoading == nil {
+                ctcLoading = Task {
+                    do {
+                        self.ctcModels = try await CtcModels.downloadAndLoad(variant: .ctc110m)
+                    } catch {
+                        self.boostingFailed = true
+                    }
+                    self.ctcLoading = nil
+                }
             }
+            return nil
+        }
+        do {
             let vocabulary = CustomVocabularyContext(terms: terms.map { CustomVocabularyTerm(text: $0) })
             let session = try await VocabularyBoostingSession(vocabulary: vocabulary, ctcModels: models)
             boosting = (terms, session)
