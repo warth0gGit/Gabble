@@ -194,6 +194,16 @@ final class LexiconStore: ObservableObject {
         }
     }
 
+    /// Each confirmed term with the ways it tends to be misheard, so Parakeet's
+    /// Word List helper can recognise "clawed" as a likely "Claude".
+    var soundsLikeByTerm: [String: [String]] {
+        var map: [String: [String]] = [:]
+        for entry in confirmed where !entry.soundsLike.isEmpty {
+            map[entry.term, default: []].append(contentsOf: entry.soundsLike)
+        }
+        return map
+    }
+
     /// Replacements applied to every dictation: each mishearing becomes the right spelling.
     var replacements: [TextCleaner.Replacement] {
         confirmed.flatMap { entry in
@@ -234,6 +244,12 @@ final class LexiconStore: ObservableObject {
         guard let data = try? Data(contentsOf: fileURL),
               let decoded = try? decoder.decode([LexiconEntry].self, from: data) else { return }
         entries = decoded
+        shareSoundsLike()
+    }
+
+    private func shareSoundsLike() {
+        let map = soundsLikeByTerm
+        Task { await ParakeetService.shared.setSoundsLike(map) }
     }
 
     private func save() {
@@ -243,5 +259,6 @@ final class LexiconStore: ObservableObject {
         if let data = try? encoder.encode(entries) {
             try? data.write(to: fileURL, options: .atomic)
         }
+        shareSoundsLike()
     }
 }

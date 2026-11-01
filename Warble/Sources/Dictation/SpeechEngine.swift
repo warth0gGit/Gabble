@@ -38,11 +38,16 @@ final class SpeechEngine {
     private var resultsTask: Task<Void, Never>?
     private var finalText = ""
     private var volatileText = ""
+    /// Counts dictations, so results arriving late from an earlier one (after a
+    /// reset) can't leak into the next.
+    private var run = 0
 
     private(set) var isRunning = false
 
     func start(hints: [String]) async throws {
         guard !isRunning else { return }
+        run += 1
+        let mine = run
         finalText = ""
         volatileText = ""
 
@@ -81,7 +86,7 @@ final class SpeechEngine {
             do {
                 for try await result in transcriber.results {
                     let text = String(result.text.characters)
-                    guard let self else { return }
+                    guard let self, self.run == mine else { return }
                     if result.isFinal {
                         self.finalText = Self.join(self.finalText, text)
                         self.volatileText = ""
@@ -98,8 +103,21 @@ final class SpeechEngine {
             }
         }
 
-        try await analyzer.start(inputSequence: stream)
-        try startMicrophone(converting: analyzerFormat, into: continuation)
+        do {
+            try await analyzer.start(inputSequence: stream)
+            try startMicrophone(converting: analyzerFormat, into: continuation)
+        } catch {
+            // Don't leave a half-started analyzer or microphone running.
+            audioEngine.inputNode.removeTap(onBus: 0)
+            audioEngine.stop()
+            continuation.finish()
+            inputContinuation = nil
+            await analyzer.cancelAndFinishNow()
+            resultsTask?.cancel()
+            resultsTask = nil
+            self.analyzer = nil
+            throw error
+        }
         isRunning = true
     }
 

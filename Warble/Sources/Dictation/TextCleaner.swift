@@ -33,6 +33,14 @@ enum TextCleaner {
                 let before = result[..<range.lowerBound]
                 let after = String(result[range.upperBound...]
                     .drop(while: { " ,.;:!".contains($0) }))
+                // "Her birthday is in December, scratch that, her birthday is in
+                // November": the speaker re-says the start of what they're
+                // replacing, so cut back to exactly there.
+                if let restart = restartPoint(in: String(before), for: after) {
+                    let keep = String(before[..<restart]).trimmingCharacters(in: .whitespaces)
+                    result = keep.isEmpty ? after : keep + " " + after
+                    continue
+                }
                 // Drop the sentence (or clause) immediately before the phrase.
                 let trimmed = before.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:"))
                 let withoutLastPunct = trimmed.hasSuffix(".") || trimmed.hasSuffix("!") || trimmed.hasSuffix("?")
@@ -45,6 +53,23 @@ enum TextCleaner {
             }
         }
         return result
+    }
+
+    /// Where the speaker began the words they re-say after "scratch that":
+    /// the last place the first two words that follow it appear, if that's
+    /// recent. Nil when they started afresh.
+    static func restartPoint(in before: String, for after: String) -> String.Index? {
+        let lead = after.split(whereSeparator: \.isWhitespace).prefix(2)
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+        guard lead.count == 2, lead.allSatisfy({ !$0.isEmpty }) else { return nil }
+        let pattern = "(?i)(?<![\\p{L}\\p{N}'])" + NSRegularExpression.escapedPattern(for: lead[0])
+            + "[\\s,]+" + NSRegularExpression.escapedPattern(for: lead[1]) + "(?![\\p{L}\\p{N}])"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let matches = regex.matches(in: before, range: NSRange(before.startIndex..., in: before))
+        guard let last = matches.last, let found = Range(last.range, in: before) else { return nil }
+        // Only a recent restart, not something said long before.
+        guard before[found.lowerBound...].split(whereSeparator: \.isWhitespace).count <= 40 else { return nil }
+        return found.lowerBound
     }
 
     static func applyReplacements(_ text: String, _ replacements: [Replacement]) -> String {

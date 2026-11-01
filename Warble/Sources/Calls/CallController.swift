@@ -156,8 +156,18 @@ final class CallController: ObservableObject {
         var finished = await recorder.stop()
         self.recorder = nil
         askingWho = nil
-        if appState.recognitionModel == .parakeet {
-            finished = await retranscribe(finished, recordings: recorder.recordings)
+        if appState.recognitionModel == .parakeet, await ParakeetService.shared.isReady {
+            // Parakeet re-reads a call at well over 100× real time, so this is
+            // normally seconds. Never let it hold up saving: keep the live
+            // transcript if it takes far longer than it should.
+            let minutes = Date().timeIntervalSince(finished.started) / 60
+            let current = finished
+            let recordings = recorder.recordings
+            if let better = await withDeadline(seconds: 60 + minutes * 10, {
+                await self.retranscribe(current, recordings: recordings)
+            }) {
+                finished = better
+            }
         }
         finished.relabel { [self] segment in label(for: segment) }
         recordingStarted = nil

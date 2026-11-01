@@ -73,6 +73,16 @@ final class LexiconStoreTests: XCTestCase {
         XCTAssertEqual(store.replacements, [TextCleaner.Replacement(heard: "sass", written: "SaaS")])
     }
 
+    @MainActor
+    func testSoundsLikeByTermListsOnlyConfirmedMishearings() {
+        let store = makeStore()
+        store.add(term: "Claude", soundsLike: ["clawed"])
+        store.add(term: "Claude", soundsLike: ["clod"])
+        store.add(term: "OKR")
+        store.add(term: "Kubernetes", soundsLike: ["cube net ease"], state: .suggested)
+        XCTAssertEqual(store.soundsLikeByTerm, ["Claude": ["clawed", "clod"]])
+    }
+
     func testPersistsBetweenLaunches() {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         LexiconStore(fileURL: url).add(term: "OKR", meaning: "objectives and key results")

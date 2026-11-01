@@ -13,7 +13,12 @@ actor ParakeetService {
     private var loading: Task<AsrManager, Error>?
     private var tail: Task<Void, Never>?
     private var ctcModels: CtcModels?
-    private var boosting: (terms: [String], session: VocabularyBoostingSession)?
+    private var boosting: (terms: [String], soundsLike: [String: [String]], session: VocabularyBoostingSession)?
+    /// How each Word List term tends to be misheard ("clawed" for "Claude").
+    /// The Word List helper only considers a word that's spelt fairly like a
+    /// term, and "clawed" isn't spelt like "Claude", so without these it would
+    /// never even check.
+    private var soundsLike: [String: [String]] = [:]
     private var boostingFailed = false
     private var ctcLoading: Task<Void, Never>?
 
@@ -87,8 +92,12 @@ actor ParakeetService {
         return output.text
     }
 
+    func setSoundsLike(_ map: [String: [String]]) {
+        soundsLike = map
+    }
+
     private func session(for terms: [String]) async -> VocabularyBoostingSession? {
-        if let boosting, boosting.terms == terms { return boosting.session }
+        if let boosting, boosting.terms == terms, boosting.soundsLike == soundsLike { return boosting.session }
         guard !boostingFailed else { return nil }
         // The vocabulary model downloads (about 100 MB) the first time a Word List
         // term is used. Never make dictation wait for that: fetch it in the
@@ -107,9 +116,13 @@ actor ParakeetService {
             return nil
         }
         do {
-            let vocabulary = CustomVocabularyContext(terms: terms.map { CustomVocabularyTerm(text: $0) })
+            let aliases = soundsLike
+            let vocabulary = CustomVocabularyContext(terms: terms.map { term in
+                let heard = (aliases[term] ?? []).filter { $0.caseInsensitiveCompare(term) != .orderedSame }
+                return CustomVocabularyTerm(text: term, aliases: heard.isEmpty ? nil : heard)
+            })
             let session = try await VocabularyBoostingSession(vocabulary: vocabulary, ctcModels: models)
-            boosting = (terms, session)
+            boosting = (terms, aliases, session)
             return session
         } catch {
             // Boosting is a bonus; transcription still works without it.

@@ -2,6 +2,10 @@ import AVFoundation
 import FluidAudio
 import Foundation
 
+/// Thrown when Parakeet hasn't finished loading, so dictation can use Apple's
+/// engine straight away instead of making you wait.
+struct ParakeetNotReady: Error {}
+
 /// Live dictation with NVIDIA Parakeet. Parakeet works on whole stretches of
 /// audio rather than word by word, but it is fast enough to re-read the phrase
 /// you're saying twice a second. That gives the same live typing as Apple's
@@ -27,19 +31,25 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
     private var finalText = ""
     private var hints: [String] = []
     private var lastDecodedVersion = -1
+    /// Counts dictations, so a slow decode from an earlier one can't add its
+    /// words to the next.
+    private var run = 0
     private(set) var isRunning = false
 
     func start(hints: [String]) async throws {
         guard !isRunning else { return }
+        // Loading Parakeet can take from a few seconds to several minutes (the
+        // first time it downloads about 600 MB). Never make dictation wait for it:
+        // load it in the background and use Apple's engine until it's ready.
+        guard await ParakeetService.shared.isReady else {
+            ParakeetStatus.shared.warmUp()
+            throw ParakeetNotReady()
+        }
+        run += 1
         finalText = ""
         lastDecodedVersion = -1
         self.hints = hints
         audio.reset()
-
-        if !(await ParakeetService.shared.isReady) {
-            onPreparing?("Loading the Parakeet speech model (the first time downloads about 600 MB)…")
-        }
-        try await ParakeetService.shared.prepare()
 
         try startMicrophone()
         isRunning = true
@@ -81,6 +91,7 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
     // MARK: - Decoding
 
     private func refresh() async {
+        let mine = run
         let snapshot = audio.snapshot()
         guard snapshot.hasSpeech else { return }
         if snapshot.trailingSilence >= phrasePause || snapshot.duration >= maxPhrase {
@@ -89,7 +100,7 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
         } else if snapshot.version != lastDecodedVersion {
             lastDecodedVersion = snapshot.version
             guard let result = try? await ParakeetService.shared.transcribe(snapshot.samples),
-                  isRunning else { return }
+                  isRunning, mine == run else { return }
             let words = Self.tidy(result.text)
             onVolatileSegment?(words)
             onPartial?(Self.join(finalText, words))
@@ -97,10 +108,12 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
     }
 
     private func finishPhrase(_ samples: [Float]) async {
+        let mine = run
         guard let result = try? await ParakeetService.shared.transcribe(samples) else { return }
         let boosted = await ParakeetService.shared.boost(
             text: result.text, timings: result.tokenTimings ?? [],
             audio: ParakeetService.padded(samples), terms: hints)
+        guard mine == run else { return }
         let phrase = Self.tidy(boosted)
         if !phrase.isEmpty {
             finalText = Self.join(finalText, phrase)

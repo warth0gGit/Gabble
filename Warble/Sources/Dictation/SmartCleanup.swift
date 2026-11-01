@@ -28,14 +28,35 @@ enum WritingStyle: String {
     }
 }
 
+/// What happened to the last AI tidy-up, shown in Settings so a skipped
+/// tidy-up is never a mystery.
+enum CleanupOutcome: Equatable {
+    case smart(seconds: Double)
+    case skipped(reason: String)
+
+    var summary: String {
+        switch self {
+        case .smart(let seconds):
+            return String(format: "Last dictation was tidied by Apple Intelligence in %.1f s.", seconds)
+        case .skipped(let reason):
+            return "Last dictation got the basic tidy-up only: \(reason)"
+        }
+    }
+}
+
 /// On-device AI cleanup using Apple Intelligence (Foundation Models framework).
 enum SmartCleanup {
+    /// Content-transformation guardrails: the text is the user's own words being
+    /// edited, so the stricter default filter (meant for open-ended chat) would
+    /// refuse ordinary dictation more often than it should.
+    static let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
+
     static var isAvailable: Bool {
-        SystemLanguageModel.default.isAvailable
+        model.isAvailable
     }
 
     static var unavailableReason: String? {
-        switch SystemLanguageModel.default.availability {
+        switch model.availability {
         case .available:
             return nil
         case .unavailable(let reason):
@@ -50,6 +71,12 @@ enum SmartCleanup {
                 return "Apple Intelligence isn't available. Basic cleanup is used instead."
             }
         }
+    }
+
+    /// How long to wait for the model. It writes roughly as fast as you read,
+    /// so a long ramble needs longer than a one-liner. Pure, unit tested.
+    static func deadline(forWords words: Int) -> Double {
+        min(20, 6 + Double(words) / 12)
     }
 
     static let instructions = """
@@ -73,7 +100,10 @@ enum SmartCleanup {
     bulleted list.
     - Keep the speaker's meaning, tone and level of detail. Do not add information, summarise, or \
     swap their words for fancier ones.
-    - Spell the terms in the word list exactly as written there.
+    - Spell the terms in the word list exactly as written there. The transcript comes from speech \
+    recognition, so a word-list term is sometimes heard as a sound-alike word: "clawed" or "cloud" for \
+    "Claude", "sass" for "SaaS". Swap in the word-list term when a word sounds like it and the context \
+    shows the term was meant ("ask clawed to summarise it" becomes "ask Claude to summarise it").
 
     Examples:
 
@@ -95,21 +125,37 @@ enum SmartCleanup {
     Edited: Hey, just checking in on the proposal. I know you're busy, but if you could send it over by tomorrow morning, that would be great.
     """
 
-    /// Returns the cleaned text, or nil if the model is unavailable or its answer looks unsafe to use.
-    static func clean(_ text: String, terms: [String], style: WritingStyle) async -> String? {
-        guard isAvailable, !text.isEmpty else { return nil }
-        let session = LanguageModelSession(instructions: instructions)
+    /// Builds the prompt for one dictation. Pure, unit tested.
+    static func prompt(for text: String, terms: [String], style: WritingStyle) -> String {
         var prompt = "Style: \(style.guidance)\n"
         if !terms.isEmpty {
             prompt += "Word list: \(terms.prefix(150).joined(separator: ", "))\n"
         }
         prompt += "Transcript: \(text)\nEdited:"
-        do {
-            let response = try await session.respond(to: prompt, options: GenerationOptions(temperature: 0.1))
-            return validated(response.content, original: text)
-        } catch {
-            return nil
+        return prompt
+    }
+
+    /// Plain-English reason for a model error, for the Settings page.
+    static func describe(_ error: Error) -> String {
+        if let error = error as? LanguageModelSession.GenerationError {
+            switch error {
+            case .guardrailViolation:
+                return "Apple Intelligence's safety filter refused this text."
+            case .rateLimited:
+                return "macOS limited Apple Intelligence for apps in the background."
+            case .exceededContextWindowSize:
+                return "the dictation was too long for Apple Intelligence."
+            case .unsupportedLanguageOrLocale:
+                return "Apple Intelligence doesn't support this language yet."
+            case .assetsUnavailable:
+                return "Apple Intelligence's model wasn't ready."
+            case .concurrentRequests:
+                return "Apple Intelligence was busy with another request."
+            default:
+                break
+            }
         }
+        return "Apple Intelligence reported an error (\(error.localizedDescription))."
     }
 
     /// Rejects answers that are clearly not a cleaned-up version of the input
@@ -129,4 +175,37 @@ enum SmartCleanup {
         if original.count <= 40, result.count > original.count + 40 { return nil }
         return result
     }
+}
+
+/// One tidy-up's Apple Intelligence session. It is created and warmed up when
+/// dictation starts, so the model is loaded and has read its instructions by
+/// the time you stop talking.
+final class CleanupSession: @unchecked Sendable {
+    private let session: LanguageModelSession
+
+    init() {
+        session = LanguageModelSession(model: SmartCleanup.model, instructions: SmartCleanup.instructions)
+    }
+
+    func prewarm() {
+        session.prewarm()
+    }
+
+    func clean(_ text: String, terms: [String], style: WritingStyle) async -> Result<String, CleanupFailure> {
+        guard !text.isEmpty else { return .failure(CleanupFailure(reason: "nothing to tidy.")) }
+        do {
+            let response = try await session.respond(to: SmartCleanup.prompt(for: text, terms: terms, style: style),
+                                                     options: GenerationOptions(temperature: 0.1))
+            guard let result = SmartCleanup.validated(response.content, original: text) else {
+                return .failure(CleanupFailure(reason: "Apple Intelligence's answer didn't look like your words, so Warble kept the original."))
+            }
+            return .success(result)
+        } catch {
+            return .failure(CleanupFailure(reason: SmartCleanup.describe(error)))
+        }
+    }
+}
+
+struct CleanupFailure: Error, Equatable {
+    var reason: String
 }

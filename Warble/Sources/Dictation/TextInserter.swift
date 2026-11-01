@@ -23,7 +23,9 @@ enum TextInserter {
 
         sendPaste()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        // Give slower apps (Electron apps like Claude and Teams, or a busy Mac)
+        // time to read the clipboard before the user's own copy is put back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             // Only restore if nothing else has used the clipboard since.
             guard pasteboard.changeCount == changeCount else { return }
             pasteboard.clearContents()
@@ -58,6 +60,12 @@ enum TextInserter {
     static func replaceTyped(_ typed: String, with replacement: String) -> Bool {
         guard typed != replacement, !typed.isEmpty, !replacement.isEmpty else { return false }
         guard check(textBeforeCursorEndsWith: typed) == .matches else { return false }
+        // Select the old words directly through Accessibility where the app
+        // allows it: exact, and instant even for a long dictation.
+        if selectBeforeCursor(typed) {
+            insert(replacement)
+            return true
+        }
         let source = CGEventSource(stateID: .hidSystemState)
         let count = typed.count
         for _ in 0..<count {
@@ -72,6 +80,64 @@ enum TextInserter {
     }
 
     enum FieldCheck { case matches, differs, unreadable }
+
+    /// Selects `text`, which sits just before the cursor, via Accessibility, and
+    /// checks the selection is exactly that text. Puts the cursor back and
+    /// returns false if the app doesn't support it.
+    private static func selectBeforeCursor(_ text: String) -> Bool {
+        guard let element = focusedElement(),
+              let range = selectedRange(of: element), range.length == 0 else { return false }
+        let length = (text as NSString).length
+        guard range.location >= length else { return false }
+        var wanted = CFRange(location: range.location - length, length: length)
+        guard let value = AXValueCreate(.cfRange, &wanted),
+              AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success
+        else { return false }
+        var selected: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selected) == .success,
+           let selectedText = selected as? String, normalised(selectedText) == normalised(text) {
+            return true
+        }
+        // Not what we expected: put the cursor back where it was.
+        var original = range
+        if let back = AXValueCreate(.cfRange, &original) {
+            AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, back)
+        }
+        return false
+    }
+
+    private static func focusedElement() -> AXUIElement? {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        return (focused as! AXUIElement)
+    }
+
+    private static func selectedRange(of element: AXUIElement) -> CFRange? {
+        var rangeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,
+              let rangeValue, CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
+    /// Apps built with Electron (Claude, Slack, Teams, VS Code) hide their text
+    /// boxes from Accessibility until an assistive app asks for them. Asking
+    /// lets Warble read what's in the box, so it can learn from your corrections.
+    static func enableAccessibilityForFrontmostApp() {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              !accessibilityEnabledApps.contains(app.processIdentifier),
+              let bundle = app.bundleURL else { return }
+        accessibilityEnabledApps.insert(app.processIdentifier)
+        let electron = bundle.appendingPathComponent("Contents/Frameworks/Electron Framework.framework")
+        guard FileManager.default.fileExists(atPath: electron.path) else { return }
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    }
+
+    private static var accessibilityEnabledApps: Set<pid_t> = []
 
     /// True when the focused text box is a normal Mac text field whose text
     /// Warble can read. Web-based boxes (the Claude app, Slack, browsers) don't

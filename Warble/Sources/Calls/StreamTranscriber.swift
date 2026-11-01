@@ -96,8 +96,18 @@ final class StreamTranscriber: @unchecked Sendable {
         self.analyzer = nil
         lock.unlock()
         continuation?.finish()
-        try? await analyzer?.finalizeAndFinishThroughEndOfInput()
-        await resultsTask?.value
+        // Finishing normally takes a moment. If the speech model stalls, give up
+        // after a few seconds and keep what was heard, so saving can't get stuck.
+        let results = resultsTask
+        let finished = await withDeadline(seconds: 8) {
+            try? await analyzer?.finalizeAndFinishThroughEndOfInput()
+            await results?.value
+            return true
+        }
+        if finished == nil {
+            await analyzer?.cancelAndFinishNow()
+            results?.cancel()
+        }
         resultsTask = nil
     }
 }

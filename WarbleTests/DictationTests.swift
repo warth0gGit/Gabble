@@ -26,6 +26,28 @@ final class TextCleanerTests: XCTestCase {
         XCTAssertEqual(TextCleaner.clean("Send it Monday. Scratch that. Send it Tuesday."), "Send it Tuesday.")
     }
 
+    func testScratchThatCutsBackToTheRestatedWords() {
+        // Jonny's real dictation (build 16), as Parakeet heard it.
+        let heard = "Also, I just need to see how well the like the like the tidy up works also I'm gonna say that "
+            + "Shorty's birthday is in December. Stratch that Shorty's birthday is in November."
+        XCTAssertEqual(TextCleaner.clean(heard),
+                       "Also, I just need to see how well the tidy up works also I'm gonna say that "
+                       + "Shorty's birthday is in November.")
+    }
+
+    func testScratchThatWithoutRestatingDropsTheSentence() {
+        XCTAssertEqual(TextCleaner.clean("Call me at six. Scratch that. Text me instead."), "Text me instead.")
+    }
+
+    func testRestartPointNeedsTheSameTwoWords() {
+        XCTAssertNil(TextCleaner.restartPoint(in: "Send it to the team.", for: "the board"))
+        XCTAssertNotNil(TextCleaner.restartPoint(in: "We meet on Monday.", for: "we meet on Tuesday"))
+    }
+
+    func testRemovesLikeBetweenRepeatedWords() {
+        XCTAssertEqual(TextCleaner.clean("the like the like the tidy up works"), "The tidy up works")
+    }
+
     func testSpokenNewLine() {
         XCTAssertEqual(TextCleaner.clean("first point new line second point"), "First point\nSecond point")
     }
@@ -65,6 +87,29 @@ final class SmartCleanupTests: XCTestCase {
         XCTAssertEqual(SmartCleanup.validated("Cleaned text: \"Let's meet Wednesday.\"",
                                               original: "um let's meet tuesday no wednesday"),
                        "Let's meet Wednesday.")
+    }
+
+    func testDeadlineGrowsWithLengthButIsCapped() {
+        XCTAssertEqual(SmartCleanup.deadline(forWords: 0), 6)
+        XCTAssertGreaterThan(SmartCleanup.deadline(forWords: 80), 6 + 5)
+        XCTAssertEqual(SmartCleanup.deadline(forWords: 5_000), 20)
+    }
+
+    func testPromptCarriesWordListAndTranscript() {
+        let prompt = SmartCleanup.prompt(for: "ask clawed", terms: ["Claude", "SaaS"], style: .prompt)
+        XCTAssertTrue(prompt.contains("Word list: Claude, SaaS"))
+        XCTAssertTrue(prompt.hasSuffix("Transcript: ask clawed\nEdited:"))
+        XCTAssertFalse(SmartCleanup.prompt(for: "hi", terms: [], style: .chat).contains("Word list"))
+    }
+
+    func testInstructionsCoverSoundAlikeTerms() {
+        XCTAssertTrue(SmartCleanup.instructions.contains("\"clawed\""))
+    }
+
+    func testCleanupOutcomeSummaries() {
+        XCTAssertEqual(CleanupOutcome.smart(seconds: 1.24).summary,
+                       "Last dictation was tidied by Apple Intelligence in 1.2 s.")
+        XCTAssertTrue(CleanupOutcome.skipped(reason: "it was slow.").summary.hasSuffix("it was slow."))
     }
 
     func testWritingStyleForApps() {

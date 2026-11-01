@@ -67,7 +67,12 @@ struct DictationView: View {
                      : "Your words appear all at once, already tidied, when you finish.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                if appState.dictationKey == .fn {
+                if appState.dictationKey == .fn, let action = FnKeySetting.current, action != .doNothing {
+                    Label("Your Mac also uses the Fn key to \(action.description). That can pop up over your text and swallow what Warble types. In System Settings → Keyboard, set \"Press 🌐 key to\" to \"Do Nothing\".",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                } else if appState.dictationKey == .fn, FnKeySetting.current == nil {
                     Text("Tip: if pressing Fn opens the emoji picker or Apple's own dictation, go to System Settings → Keyboard and set \"Press 🌐 key to\" to \"Do Nothing\".")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -149,6 +154,23 @@ struct DictationView: View {
                         .font(.callout)
                         .foregroundStyle(.green)
                 }
+                if appState.cleanupEnabled, let outcome = dictation.lastCleanup {
+                    switch outcome {
+                    case .smart:
+                        Label(outcome.summary, systemImage: "sparkles")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    case .skipped:
+                        Label(outcome.summary, systemImage: "exclamationmark.circle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                if let note = dictation.lastNote {
+                    Label(note, systemImage: "info.circle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
@@ -161,6 +183,7 @@ struct LexiconView: View {
     @EnvironmentObject private var lexicon: LexiconStore
     @State private var newTerm = ""
     @State private var newMeaning = ""
+    @State private var newSoundsLike = ""
     @State private var showingImport = false
     @State private var importText = ""
 
@@ -170,9 +193,13 @@ struct LexiconView: View {
 
     private func addWord() {
         guard canAdd else { return }
-        lexicon.add(term: newTerm, meaning: newMeaning)
+        let heard = newSoundsLike.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        lexicon.add(term: newTerm, soundsLike: heard, meaning: newMeaning)
         newTerm = ""
         newMeaning = ""
+        newSoundsLike = ""
     }
 
     var body: some View {
@@ -193,6 +220,18 @@ struct LexiconView: View {
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.leading)
                             .onSubmit(addWord)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Warble mishears it as (optional)")
+                            .font(.subheadline.weight(.medium))
+                        TextField("Misheard as", text: $newSoundsLike, prompt: Text("e.g. clawed, clod"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.leading)
+                            .onSubmit(addWord)
+                        Text("Separate several with commas. Warble will always write the word instead of these. To add one to a word you already have, type the word again here.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("What it means (optional)")
@@ -513,6 +552,27 @@ struct ParakeetStatusRow: View {
                 Spacer()
                 Button("Try again") { status.warmUp() }
             }
+        }
+    }
+}
+
+/// What macOS does when the Fn (🌐) key is pressed, from System Settings → Keyboard.
+enum FnKeySetting: Int {
+    case doNothing = 0, changeInputSource = 1, showEmoji = 2, startDictation = 3
+
+    /// Nil if the setting can't be read.
+    static var current: FnKeySetting? {
+        guard let value = UserDefaults(suiteName: "com.apple.HIToolbox")?.object(forKey: "AppleFnUsageType") as? Int
+        else { return nil }
+        return FnKeySetting(rawValue: value)
+    }
+
+    var description: String {
+        switch self {
+        case .doNothing: return "do nothing"
+        case .changeInputSource: return "change the keyboard language"
+        case .showEmoji: return "show the emoji picker"
+        case .startDictation: return "start Apple's own dictation"
         }
     }
 }

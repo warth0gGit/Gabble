@@ -23,6 +23,10 @@ final class DictationController: ObservableObject {
     @Published private(set) var isHandsFree = false
     @Published private(set) var lastResult = ""
     @Published private(set) var lastError: String?
+    /// What happened to the last tidy-up, shown on the Dictation page.
+    @Published private(set) var lastCleanup: CleanupOutcome?
+    /// A one-off note about the last dictation, e.g. that Parakeet was still loading.
+    @Published private(set) var lastNote: String?
     /// When set, the result goes here instead of being typed (used by the "Try it" box).
     var testSink: ((String) -> Void)?
 
@@ -47,6 +51,14 @@ final class DictationController: ObservableObject {
     private var typer = LivePhraseTyper()
     private var typedSoFar: String { typer.typedSoFar }
     private var isLiveTyping = false
+    /// Counts dictations. Work that finishes after its dictation was reset or
+    /// replaced (a slow speech engine or tidy-up) checks this and stands down,
+    /// so it can never type into the wrong place or change the new dictation.
+    private var session = 0
+    /// True while a speech engine is starting, so a second start can't overlap it.
+    private var engineStarting = false
+    /// Apple Intelligence, warmed up while you talk.
+    private var cleanupSession: CleanupSession?
 
     /// A press shorter than this starts hands-free mode instead of push-to-talk.
     private let tapThreshold: TimeInterval = 0.35
@@ -80,6 +92,15 @@ final class DictationController: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Load Parakeet as soon as Warble opens (and when it's chosen), so the
+        // first dictation doesn't have to fall back to Apple's engine.
+        appState.$recognitionModel
+            .receive(on: RunLoop.main)
+            .sink { model in
+                if model == .parakeet { ParakeetStatus.shared.warmUp() }
+            }
+            .store(in: &cancellables)
+
         $phase
             .receive(on: RunLoop.main)
             .sink { [weak self] phase in self?.updateHUD(for: phase) }
@@ -101,7 +122,9 @@ final class DictationController: ObservableObject {
             stopPressedAt = Date()
             return
         }
-        if isStuck {
+        if isStuck || isPreparing && Date().timeIntervalSince(phaseChangedAt) > 1 {
+            // Pressing again while Warble is still getting ready, or when it has
+            // stalled, resets dictation.
             Task { await cancel() }
             return
         }
@@ -142,7 +165,7 @@ final class DictationController: ObservableObject {
             Task { await start(handsFree: true) }
         } else if phase == .listening {
             Task { await finish() }
-        } else if isStuck {
+        } else if isStuck || isPreparing {
             Task { await cancel() }
         }
     }
@@ -152,12 +175,18 @@ final class DictationController: ObservableObject {
     private var isStuck: Bool {
         guard phase != .idle, phase != .listening else { return false }
         if case .preparing(let message) = phase, message.contains("download") { return false }
-        return Date().timeIntervalSince(phaseChangedAt) > 10
+        // Finishing can legitimately take a while on a long dictation: the speech
+        // engine has up to 6 s, then Apple Intelligence up to 20 s.
+        let limit: TimeInterval = phase == .processing ? 30 : 10
+        return Date().timeIntervalSince(phaseChangedAt) > limit
     }
 
     func start(handsFree: Bool) async {
-        guard phase == .idle else { return }
+        guard phase == .idle, !engineStarting else { return }
+        session += 1
+        let mine = session
         lastError = nil
+        lastNote = nil
         liveText = ""
         // For the shortcut key, hold-or-tap is decided by keyPressed/keyReleased;
         // don't overwrite it here, as the key may already have been released.
@@ -166,17 +195,37 @@ final class DictationController: ObservableObject {
             handsFreeSince = Date()
         }
         targetBundleID = TextInserter.frontmostBundleID
+        // Electron apps (Claude, Slack, Teams) only let Warble read their text
+        // boxes once asked; that's what lets it learn from your corrections there.
+        TextInserter.enableAccessibilityForFrontmostApp()
         typer = LivePhraseTyper()
         isLiveTyping = appState.liveTyping && testSink == nil && TextInserter.focusedFieldSupportsLiveEditing()
         phase = .preparing("Starting…")
         usingParakeet = appState.recognitionModel == .parakeet
+        if appState.cleanupEnabled && SmartCleanup.isAvailable {
+            let cleanup = CleanupSession()
+            cleanup.prewarm()
+            cleanupSession = cleanup
+        } else {
+            cleanupSession = nil
+        }
+        engineStarting = true
         do {
             do {
                 try await engine.start(hints: lexicon.recognitionHints)
             } catch where usingParakeet {
-                // If Parakeet can't load (say, the download failed), use Apple's engine this time.
+                // If Parakeet isn't loaded yet or can't load, use Apple's engine this time.
                 usingParakeet = false
+                if error is ParakeetNotReady {
+                    lastNote = "Parakeet was still loading, so Apple's speech engine was used for this dictation."
+                }
                 try await engine.start(hints: lexicon.recognitionHints)
+            }
+            engineStarting = false
+            guard mine == session else {
+                // Dictation was reset while the engine was starting.
+                await engine.cancel()
+                return
             }
             startedAt = Date()
             phase = .listening
@@ -185,6 +234,8 @@ final class DictationController: ObservableObject {
                 await finish()
             }
         } catch {
+            engineStarting = false
+            guard mine == session else { return }
             lastError = error.localizedDescription
             phase = .idle
         }
@@ -192,6 +243,7 @@ final class DictationController: ObservableObject {
 
     func finish() async {
         guard phase == .listening else { return }
+        let mine = session
         phase = .processing
         // Finishing normally takes well under a second. If the speech engine
         // stalls, cancel it and keep what was heard, so Warble never gets stuck.
@@ -204,6 +256,8 @@ final class DictationController: ObservableObject {
             await stopping.cancel()
             raw = heard.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        // Reset (by the key or the menu bar icon) while the engine was finishing.
+        guard mine == session else { return }
         startedAt = nil
         isHandsFree = false
         guard !raw.isEmpty else {
@@ -211,6 +265,7 @@ final class DictationController: ObservableObject {
             return
         }
         let cleaned = await cleanUp(raw)
+        guard mine == session else { return }
 
         if isLiveTyping && !typedSoFar.isEmpty {
             // Words are already in the field; swap in the tidied version if it differs.
@@ -254,6 +309,8 @@ final class DictationController: ObservableObject {
     }
 
     func cancel() async {
+        session += 1
+        cleanupSession = nil
         isLiveTyping = false
         startedAt = nil
         isHandsFree = false
@@ -267,17 +324,36 @@ final class DictationController: ObservableObject {
 
     private func cleanUp(_ raw: String) async -> String {
         let basic = TextCleaner.clean(raw, replacements: lexicon.replacements)
-        guard appState.cleanupEnabled else { return basic }
+        let warmed = cleanupSession
+        cleanupSession = nil
+        guard appState.cleanupEnabled else {
+            lastCleanup = nil
+            return basic
+        }
+        guard SmartCleanup.isAvailable else {
+            lastCleanup = .skipped(reason: SmartCleanup.unavailableReason ?? "Apple Intelligence isn't available.")
+            return basic
+        }
         let style = WritingStyle.forApp(bundleID: targetBundleID)
         let terms = lexicon.recognitionHints
-        // Apple Intelligence usually answers in about a second, but can be slow the
-        // first time after an update or restart. Never wait more than a few seconds.
-        let smartResult = await withDeadline(seconds: 6) {
-            await SmartCleanup.clean(basic, terms: terms, style: style)
+        let cleanup = warmed ?? CleanupSession()
+        // Apple Intelligence usually answers in a second or two, more for a long
+        // ramble. Never wait longer than the deadline: fall back to the basic tidy-up.
+        let words = basic.split(whereSeparator: \.isWhitespace).count
+        let limit = SmartCleanup.deadline(forWords: words)
+        let began = Date()
+        let result = await withDeadline(seconds: limit) {
+            await cleanup.clean(basic, terms: terms, style: style)
         }
-        if let smart = smartResult ?? nil {
+        switch result {
+        case .success(let smart)?:
+            lastCleanup = .smart(seconds: Date().timeIntervalSince(began))
             // Re-apply known spellings in case the model changed them.
             return TextCleaner.applyReplacements(smart, lexicon.replacements)
+        case .failure(let failure)?:
+            lastCleanup = .skipped(reason: failure.reason)
+        case nil:
+            lastCleanup = .skipped(reason: "Apple Intelligence took longer than \(Int(limit)) seconds.")
         }
         return basic
     }
