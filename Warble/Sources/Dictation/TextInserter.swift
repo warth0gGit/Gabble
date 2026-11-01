@@ -52,15 +52,12 @@ enum TextInserter {
     }
 
     /// Replaces text Warble just typed (immediately before the cursor) with a
-    /// tidied version. When the app lets Warble read the field, it first checks
-    /// the typed text is really there, so it never deletes anything you typed
-    /// yourself. Some apps (Claude, Slack and other web-based apps) don't let
-    /// Warble read their text; there it replaces by position, since you were
-    /// dictating rather than typing. Returns false if the replacement was skipped.
+    /// tidied version. It first checks the typed text is really there, so it
+    /// never deletes anything you typed yourself. Returns false if skipped.
     @discardableResult
     static func replaceTyped(_ typed: String, with replacement: String) -> Bool {
         guard typed != replacement, !typed.isEmpty, !replacement.isEmpty else { return false }
-        guard check(textBeforeCursorEndsWith: typed) != .differs else { return false }
+        guard check(textBeforeCursorEndsWith: typed) == .matches else { return false }
         let source = CGEventSource(stateID: .hidSystemState)
         let count = typed.count
         for _ in 0..<count {
@@ -75,6 +72,39 @@ enum TextInserter {
     }
 
     enum FieldCheck { case matches, differs, unreadable }
+
+    /// True when the focused text box is a normal Mac text field whose text
+    /// Warble can read. Web-based boxes (the Claude app, Slack, browsers) don't
+    /// reliably honour the key presses Warble uses to swap in tidied text, so
+    /// there Warble shows live words in its capsule and types once at the end.
+    static func focusedFieldSupportsLiveEditing() -> Bool {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
+        let element = focused as! AXUIElement
+        var value: CFTypeRef?
+        var rangeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
+              value is String,
+              AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success
+        else { return false }
+        // Inside a web page?
+        var current: AXUIElement? = element
+        for _ in 0..<25 {
+            guard let node = current else { break }
+            var role: CFTypeRef?
+            if AXUIElementCopyAttributeValue(node, kAXRoleAttribute as CFString, &role) == .success,
+               (role as? String) == "AXWebArea" {
+                return false
+            }
+            var parent: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(node, kAXParentAttribute as CFString, &parent) == .success,
+                  let parent, CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+            current = (parent as! AXUIElement)
+        }
+        return true
+    }
 
     /// Checks, via Accessibility, whether the focused text field has `text` right before the cursor.
     static func check(textBeforeCursorEndsWith text: String) -> FieldCheck {

@@ -170,3 +170,16 @@ final class WordErrorRateTests: XCTestCase {
         XCTAssertEqual(missed, ["SOW"])
     }
 }
+
+final class FillerAndScratchTests: XCTestCase {
+    func testLikeBetweenRepeatedWords() {
+        XCTAssertEqual(TextCleaner.clean("see how well the like the like the tidy up works"),
+                       "See how well the tidy up works")
+    }
+
+    func testMisheardScratchThat() {
+        let out = TextCleaner.clean("Shorty's birthday is in December. Stratch that Shorty's birthday is in November.")
+        XCTAssertFalse(out.contains("December"))
+        XCTAssertTrue(out.contains("November"))
+    }
+}

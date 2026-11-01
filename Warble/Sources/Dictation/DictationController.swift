@@ -167,7 +167,7 @@ final class DictationController: ObservableObject {
         }
         targetBundleID = TextInserter.frontmostBundleID
         typer = LivePhraseTyper()
-        isLiveTyping = appState.liveTyping && testSink == nil
+        isLiveTyping = appState.liveTyping && testSink == nil && TextInserter.focusedFieldSupportsLiveEditing()
         phase = .preparing("Starting…")
         usingParakeet = appState.recognitionModel == .parakeet
         do {

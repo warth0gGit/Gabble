@@ -6,7 +6,7 @@ enum TextCleaner {
     static let fillers = ["um", "umm", "uh", "uhh", "er", "erm", "ah", "hmm", "mm"]
 
     /// Phrases that throw away what was said just before them in the same dictation.
-    static let scratchPhrases = ["scratch that", "delete that", "strike that"]
+    static let scratchPhrases = ["scratch that", "stratch that", "scrap that", "delete that", "strike that"]
 
     struct Replacement: Equatable {
         var heard: String
@@ -18,6 +18,7 @@ enum TextCleaner {
         text = applyScratch(text)
         text = applyReplacements(text, replacements)
         text = removeFillers(text)
+        text = removeInterruptingFillers(text)
         text = removeStutters(text)
         text = applySpokenCommands(text)
         text = tidySpacing(text)
@@ -64,6 +65,23 @@ enum TextCleaner {
         let pattern = "(?i)(?<![\\p{L}])(?:\(alternatives))(?![\\p{L}])[,.]?\\s*"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
         return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
+    }
+
+    /// Removes a filler "like" or "you know" that interrupts a repeated word,
+    /// e.g. "the like the like the tidy up" becomes "the the the tidy up",
+    /// which stutter removal then turns into "the tidy up".
+    static func removeInterruptingFillers(_ text: String) -> String {
+        let pattern = "(?i)\\b(\\w+)\\s+(?:like|you know|I mean),?\\s+(?=\\1\\b)"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        var result = text
+        // Repeat for chains like "the like the like the".
+        for _ in 0..<4 {
+            let next = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result),
+                                                      withTemplate: "$1 ")
+            if next == result { break }
+            result = next
+        }
+        return result
     }
 
     /// "the the plan" -> "the plan"
