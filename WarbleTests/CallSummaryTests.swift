@@ -70,7 +70,7 @@ final class CallSummaryTests: XCTestCase {
         t.summary = .done(sample)
         let md = t.markdown
         XCTAssertTrue(md.contains("summary: \"Acme renewal at risk: revised offer by Friday\""))
-        XCTAssertTrue(md.contains("summarised_by: Apple Intelligence (on this Mac)"))
+        XCTAssertTrue(md.contains("summarized_by: Apple Intelligence (on this Mac)"))
         XCTAssertTrue(md.contains("> [!summary] Summary\n> Acme wants to renew but pushed back on price."))
         XCTAssertTrue(md.contains("## Key points\n- Renewal due 15 December."))
         XCTAssertFalse(md.contains("## Decisions"), "empty sections are left out")
@@ -93,7 +93,7 @@ final class CallSummaryTests: XCTestCase {
         t.summary = .pending
         XCTAssertTrue(t.markdown.contains("[!summary] Summary on its way"))
         XCTAssertTrue(t.markdown.contains("## Transcript\n\n**Others** (01:05): Morning."))
-        XCTAssertFalse(t.markdown.contains("summarised_by"))
+        XCTAssertFalse(t.markdown.contains("summarized_by"))
         t.summary = .failed("Apple Intelligence took too long to answer.")
         XCTAssertTrue(t.markdown.contains("> [!warning] No summary\n> Warble couldn't write a summary of this call: Apple Intelligence took too long to answer."))
     }
@@ -102,7 +102,7 @@ final class CallSummaryTests: XCTestCase {
         var summary = sample
         summary.skippedParts = 1
         XCTAssertTrue(summary.markdownLines(people: [], callDate: start).joined(separator: "\n")
-            .contains("Part of this call couldn't be summarised"))
+            .contains("Part of this call couldn't be summarized"))
     }
 
     // MARK: - Chunks

@@ -128,7 +128,7 @@ struct CallTranscript: Equatable {
         lines.append("category: \(yaml(category))")
         if let summary = summary.summary {
             if !summary.headline.isEmpty { lines.append("summary: \(yaml(summary.headline))") }
-            lines.append("summarised_by: \(yaml(CallSummary.writer))")
+            lines.append("summarized_by: \(yaml(CallSummary.writer))")
         }
         lines.append("tags: [\((["call", "warble"] + (meeting?.seriesID != nil ? ["recurring"] : [])).joined(separator: ", "))]")
         lines.append("---")
@@ -197,7 +197,7 @@ struct CallTranscript: Equatable {
 
     private static let countFormatter: NumberFormatter = {
         let f = NumberFormatter()
-        f.locale = Locale(identifier: "en_GB")
+        f.locale = Locale(identifier: "en_US")
         f.numberStyle = .decimal
         return f
     }()

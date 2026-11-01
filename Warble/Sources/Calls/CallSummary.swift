@@ -41,7 +41,7 @@ struct CallSummary: Equatable {
         lines += Self.quoted(overview)
         if skippedParts > 0 {
             lines.append(">")
-            lines.append("> *Part of this call couldn't be summarised, so check the transcript for anything missing.*")
+            lines.append("> *Part of this call couldn't be summarized, so check the transcript for anything missing.*")
         }
         lines.append("")
         func section(_ title: String, _ items: [String]) {
@@ -222,7 +222,7 @@ enum SummaryChunker {
         var text: String { lines.joined(separator: "\n") }
     }
 
-    /// Calls shorter than this aren't worth summarising.
+    /// Calls shorter than this aren't worth summarizing.
     static let minimumWords = 60
 
     static func wordCount(_ text: String) -> Int {
