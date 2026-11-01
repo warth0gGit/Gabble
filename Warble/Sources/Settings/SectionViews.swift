@@ -42,8 +42,10 @@ struct GeneralView: View {
 struct DictationView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var dictation: DictationController
+    @EnvironmentObject private var lexicon: LexiconStore
     @State private var tryText = ""
     @State private var trying = false
+    @State private var comparingEngines = false
 
     var body: some View {
         Form {
@@ -124,6 +126,10 @@ struct DictationView: View {
                 Text("Both engines run entirely on this Mac and use your Word List to hear your jargon correctly.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                Button("Compare engines on my voice…") { comparingEngines = true }
+            }
+            .sheet(isPresented: $comparingEngines) {
+                EngineComparisonView(appState: appState, lexicon: lexicon)
             }
             .onChange(of: appState.recognitionModel, initial: true) { _, model in
                 if model == .parakeet { ParakeetStatus.shared.warmUp() }

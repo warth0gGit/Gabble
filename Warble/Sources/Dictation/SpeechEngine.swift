@@ -111,8 +111,20 @@ final class SpeechEngine {
         audioEngine.stop()
         inputContinuation?.finish()
         inputContinuation = nil
-        try? await analyzer?.finalizeAndFinishThroughEndOfInput()
-        await resultsTask?.value
+        // Finishing normally takes a fraction of a second. If the speech model
+        // stalls, give up after a few seconds and keep what was heard so far,
+        // rather than leaving dictation stuck.
+        let analyzer = self.analyzer
+        let results = resultsTask
+        let finished = await withDeadline(seconds: 4) {
+            try? await analyzer?.finalizeAndFinishThroughEndOfInput()
+            await results?.value
+            return true
+        }
+        if finished == nil {
+            await analyzer?.cancelAndFinishNow()
+            results?.cancel()
+        }
         resultsTask = nil
         analyzer = nil
         let text = Self.join(finalText, volatileText)

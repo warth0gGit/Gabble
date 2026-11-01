@@ -145,3 +145,28 @@ final class LivePhraseTyperTests: XCTestCase {
         XCTAssertEqual(t.final("and bye"), .type(" and bye"))
     }
 }
+
+final class WordErrorRateTests: XCTestCase {
+    func testPerfectMatchIgnoresCaseAndPunctuation() {
+        let w = WordErrorRate.compute(reference: "Send the Q3 deck, please.", hypothesis: "send the q3 deck please")
+        XCTAssertEqual(w.errors, 0)
+        XCTAssertEqual(w.accuracy, 1)
+    }
+
+    func testCountsEachKindOfError() {
+        let w = WordErrorRate.compute(reference: "the quick brown fox jumps", hypothesis: "the quick red fox jumps high")
+        XCTAssertEqual(w.substitutions, 1)
+        XCTAssertEqual(w.insertions, 1)
+        XCTAssertEqual(w.deletions, 0)
+        XCTAssertEqual(w.rate, 0.4, accuracy: 0.001)
+        let missing = WordErrorRate.compute(reference: "one two three", hypothesis: "one three")
+        XCTAssertEqual(missing.deletions, 1)
+        XCTAssertEqual(WordErrorRate.compute(reference: "one two", hypothesis: "").deletions, 2)
+    }
+
+    func testMissedTerms() {
+        let missed = WordErrorRate.missedTerms(["SOW", "Orchestrate"], reference: "Check the SOW for Orchestrate",
+                                               hypothesis: "check the so for orchestrate")
+        XCTAssertEqual(missed, ["SOW"])
+    }
+}

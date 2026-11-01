@@ -220,7 +220,13 @@ final class DictationController: ObservableObject {
         let basic = TextCleaner.clean(raw, replacements: lexicon.replacements)
         guard appState.cleanupEnabled else { return basic }
         let style = WritingStyle.forApp(bundleID: targetBundleID)
-        if let smart = await SmartCleanup.clean(basic, terms: lexicon.recognitionHints, style: style) {
+        let terms = lexicon.recognitionHints
+        // Apple Intelligence usually answers in about a second, but can be slow the
+        // first time after an update or restart. Never wait more than a few seconds.
+        let smartResult = await withDeadline(seconds: 6) {
+            await SmartCleanup.clean(basic, terms: terms, style: style)
+        }
+        if let smart = smartResult ?? nil {
             // Re-apply known spellings in case the model changed them.
             return TextCleaner.applyReplacements(smart, lexicon.replacements)
         }
