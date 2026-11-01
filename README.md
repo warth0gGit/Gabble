@@ -11,7 +11,7 @@ Everything runs on your Mac. Nothing you say is sent to the cloud.
 
 You don't need Xcode or any developer tools. GitHub builds Warble automatically every time the code changes.
 
-1. Open the [latest build](https://github.com/warth0gGit/Gabble/releases/tag/latest-build) and download **Warble.zip**.
+1. Open the [latest build](https://github.com/warth0gGit/Gabble/releases/tag/latest-build) and download the zip, named with its build number (e.g. **Warble14.zip**).
 2. Double-click the zip, then drag **Warble** into your **Applications** folder.
 3. Open Warble. macOS will warn that it can't check the developer, because Warble isn't signed with a paid Apple account yet. Click **Done**, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to Warble.
 4. Warble opens on its **Permissions** page. Click each **Allow** button and switch Warble on in the window that appears.

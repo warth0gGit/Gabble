@@ -52,7 +52,9 @@ jobs:
             CODE_SIGN_IDENTITY="-" \
             | tee build.log | grep -E "error:|\*\* BUILD" || true
           grep -q "\*\* BUILD SUCCEEDED \*\*" build.log
-          ditto -c -k --keepParent build/Build/Products/Release/Warble.app Warble.zip
+          BUILD=$(grep -E 'CURRENT_PROJECT_VERSION:' project.yml | head -1 | grep -oE '[0-9]+')
+          echo "BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent build/Build/Products/Release/Warble.app "Warble$BUILD.zip"
 
       - name: Upload build log on failure
         if: failure()
@@ -64,8 +66,8 @@ jobs:
       - name: Upload app
         uses: actions/upload-artifact@v4
         with:
-          name: Warble
-          path: Warble.zip
+          name: Warble${{ env.BUILD_NUMBER }}
+          path: Warble*.zip
 
       - name: Publish download link
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/project-thread-anfie7')
@@ -73,8 +75,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest-build --yes --cleanup-tag || true
-          gh release create latest-build Warble.zip \
+          gh release create latest-build "Warble${BUILD_NUMBER}.zip" \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Warble latest build" \
-            --notes "Built automatically from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Download Warble.zip, unzip it and drag Warble into Applications. See the README for first-launch steps."
+            --title "Warble build ${BUILD_NUMBER}" \
+            --notes "Build ${BUILD_NUMBER}, made automatically from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Download Warble${BUILD_NUMBER}.zip, unzip it and drag Warble into Applications. See the README for first-launch steps."
