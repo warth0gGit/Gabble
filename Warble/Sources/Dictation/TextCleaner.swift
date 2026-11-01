@@ -109,10 +109,22 @@ enum TextCleaner {
         return result
     }
 
-    /// "the the plan" -> "the plan"
+    /// "the the plan" -> "the plan"; "if it if it works" -> "if it works";
+    /// "t test" -> "test" (a cut-off start of the next word).
     static func removeStutters(_ text: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: "(?i)\\b(\\w+)(\\s+\\1\\b)+") else { return text }
-        return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "$1")
+        var result = text
+        let rules: [(String, String)] = [
+            ("(?i)\\b(\\w+\\s+\\w+\\s+\\w+)(\\s+\\1\\b)+", "$1"),   // three-word repeats
+            ("(?i)\\b(\\w+\\s+\\w+)(\\s+\\1\\b)+", "$1"),             // two-word repeats
+            ("(?i)\\b(\\w+)(\\s+\\1\\b)+", "$1"),                          // one-word repeats
+            ("(?<![\\w'\u{2019}])([b-hj-z])\\s+(?=\\1[a-z]{2,})", ""),       // "t test" (not "a", "I" or "don't")
+        ]
+        for (pattern, template) in rules {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result),
+                                                    withTemplate: template)
+        }
+        return result
     }
 
     static func applySpokenCommands(_ text: String) -> String {

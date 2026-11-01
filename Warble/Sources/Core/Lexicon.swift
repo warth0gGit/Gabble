@@ -119,6 +119,22 @@ enum LexiconLearner {
         return pairs.map { (heard: $0.0, corrected: $0.1) }
     }
 
+    /// True when `edited` is a light touch-up of `original` (a word or two
+    /// fixed), not new or different text. In apps like Claude the text box is
+    /// reused for the next message, and that must never count as a correction.
+    static func isSmallEdit(original: String, edited: String) -> Bool {
+        let a = original.split(separator: " ").map(String.init)
+        let b = edited.split(separator: " ").map(String.init)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        let diff = b.difference(from: a)
+        let removed = diff.removals.count
+        let kept = a.count - removed
+        // A real fix changes a few words and leaves the rest; a new message
+        // replaces nearly everything.
+        return removed <= 4 && diff.insertions.count <= 4 && (kept >= 1 || a.count <= 2)
+            && (a.count <= 6 || Double(kept) / Double(a.count) >= 0.6)
+    }
+
     private static func clean(_ s: String) -> String {
         s.trimmingCharacters(in: .punctuationCharacters.union(.whitespaces))
     }
@@ -219,11 +235,18 @@ final class LexiconStore: ObservableObject {
 
     /// Learns from a user's edit of dictated text. Jargon is trusted straight
     /// away; ordinary rewording is only suggested for the user to approve.
+    /// A correction only takes effect once it's been seen twice (or you approve
+    /// the suggestion), so one misread can't start swapping words in everywhere.
     func learnFromCorrection(original: String, edited: String) {
+        guard LexiconLearner.isSmallEdit(original: original, edited: edited) else { return }
         for pair in LexiconLearner.corrections(original: original, edited: edited) {
             let jargon = LexiconLearner.looksLikeJargon(pair.corrected, isKnownWord: isKnownWord)
+            let seenBefore = entries.contains {
+                $0.term.caseInsensitiveCompare(pair.corrected) == .orderedSame
+                    && $0.soundsLike.contains { $0.caseInsensitiveCompare(pair.heard) == .orderedSame }
+            }
             add(term: pair.corrected, soundsLike: [pair.heard], source: .correction,
-                state: jargon ? .confirmed : .suggested)
+                state: jargon && seenBefore ? .confirmed : .suggested)
         }
     }
 

@@ -55,6 +55,9 @@ final class LexiconStoreTests: XCTestCase {
         let store = makeStore()
         store.isKnownWord = { _ in false }
         store.learnFromCorrection(original: "open what's an x", edited: "open watsonx")
+        XCTAssertTrue(store.confirmed.isEmpty, "one correction is only a suggestion")
+        XCTAssertEqual(store.suggested.first?.term, "watsonx")
+        store.learnFromCorrection(original: "open what's an x", edited: "open watsonx")
         XCTAssertEqual(store.confirmed.first?.term, "watsonx")
         XCTAssertEqual(store.confirmed.first?.soundsLike, ["what's an x"])
     }
@@ -65,6 +68,14 @@ final class LexiconStoreTests: XCTestCase {
         store.learnFromCorrection(original: "we go to the shop", edited: "we went to the shop")
         XCTAssertTrue(store.confirmed.isEmpty)
         XCTAssertEqual(store.suggested.first?.term, "went")
+    }
+
+    func testNewMessageInTheSameBoxIsNotACorrection() {
+        let store = makeStore()
+        store.isKnownWord = { _ in false }
+        store.learnFromCorrection(original: "I'm just going to see whether this works fine",
+                                  edited: "Shadee is coming over later today")
+        XCTAssertTrue(store.entries.isEmpty)
     }
 
     func testReplacementsComeFromSoundsLike() {
