@@ -412,6 +412,8 @@ struct KnownVoicesSection: View {
 
 struct FilingView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var permissions: PermissionsManager
+    @EnvironmentObject private var calls: CallController
     @State private var choosingFolder = false
 
     var body: some View {
@@ -431,13 +433,37 @@ struct FilingView: View {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                 }
-                Text("Tip: once you set up Obsidian, pick a folder inside your vault so every transcript shows up there.")
+                Text("Calls go in the Calls folder inside it, sorted into subfolders such as Calls/1-1s/Sarah Jones.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            Section("How Warble files calls") {
+                Text("When a call ends, Warble looks at which meeting it was, who was on it and when it happens. If it has filed a call like it before, it puts it in the same folder and tells you; otherwise it asks once and remembers your answer.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Calendar").font(.headline)
+                        Text(permissions.status(.calendar) == .granted
+                             ? "Warble can see your meetings' names, invitees and whether they repeat."
+                             : "Optional, but it makes filing much smarter. Works with any calendar in the Calendar app, including Outlook.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if permissions.status(.calendar) == .granted {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Button("Allow") { permissions.request(.calendar) }
+                    }
+                }
+            }
+            FilingRulesSection(store: calls.filing)
+            ObsidianSection(folderPath: appState.masterFolderPath)
         }
         .formStyle(.grouped)
         .navigationTitle("Filing")
+        .onAppear { permissions.refresh() }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             if case let .success(url) = result {
                 appState.masterFolderPath = url.path
@@ -573,6 +599,81 @@ enum FnKeySetting: Int {
         case .changeInputSource: return "change the keyboard language"
         case .showEmoji: return "show the emoji picker"
         case .startDictation: return "start Apple's own dictation"
+        }
+    }
+}
+
+/// The folders Warble has learned to file calls into.
+struct FilingRulesSection: View {
+    @ObservedObject var store: FilingStore
+
+    var body: some View {
+        Section("Folders Warble has learned") {
+            if store.rules.isEmpty {
+                Text("None yet. After your first call, Warble asks where it should go.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(store.rules.sorted { $0.folder < $1.folder }) { rule in
+                HStack {
+                    Image(systemName: "folder.fill").foregroundStyle(WarbleColor.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(rule.folder)
+                        Text(Self.describe(rule))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Forget") { store.forget(rule) }
+                        .buttonStyle(.borderless)
+                        .help("Warble will ask again next time instead of filing here automatically.")
+                }
+            }
+        }
+    }
+
+    static func describe(_ rule: FilingRule) -> String {
+        var parts = ["\(rule.timesUsed) call\(rule.timesUsed == 1 ? "" : "s")"]
+        if !rule.seriesIDs.isEmpty { parts.append("repeating meeting") }
+        if let title = rule.titles.first { parts.append("\u{201C}\(title)\u{201D}") }
+        if let people = rule.peopleSets.first, !people.isEmpty {
+            parts.append("with " + people.prefix(3).map { $0.capitalized }.joined(separator: ", "))
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// Helps set up Obsidian on the master folder.
+struct ObsidianSection: View {
+    var folderPath: String
+
+    private var obsidianInstalled: Bool {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "md.obsidian") != nil
+    }
+
+    var body: some View {
+        Section("Obsidian") {
+            Text("Obsidian is a free notes app that reads plain Markdown files, which is what Warble writes. Each transcript lists who was on the call as links like [[Sarah Jones]], so in Obsidian you can open a person and see every call with them.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if obsidianInstalled {
+                Text("To set it up: click **Open Obsidian**, choose **Open folder as vault**, and pick your master folder: \(folderPath)")
+                    .font(.callout)
+                    .textSelection(.enabled)
+                Button("Open Obsidian") { openObsidian() }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Text("Obsidian isn't installed yet. Download it, open it, choose **Open folder as vault**, and pick your master folder: \(folderPath)")
+                    .font(.callout)
+                    .textSelection(.enabled)
+                Link("Download Obsidian", destination: URL(string: "https://obsidian.md/download")!)
+            }
+        }
+    }
+
+    private func openObsidian() {
+        try? FileManager.default.createDirectory(at: URL(fileURLWithPath: folderPath), withIntermediateDirectories: true)
+        if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "md.obsidian") {
+            NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
         }
     }
 }

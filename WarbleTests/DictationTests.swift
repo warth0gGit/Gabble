@@ -35,6 +35,12 @@ final class TextCleanerTests: XCTestCase {
                        + "Shorty's birthday is in November.")
     }
 
+    func testScratchedThatAfterNoWait() {
+        // Jonny's real dictation into the Claude app, 1 Nov 2026.
+        XCTAssertEqual(TextCleaner.clean("Do I need to wait for eighteen or no wait, sorry scratched that do I test seventeen or should I wait for eighteen?"),
+                       "Do I test seventeen or should I wait for eighteen?")
+    }
+
     func testScratchThatWithoutRestatingDropsTheSentence() {
         XCTAssertEqual(TextCleaner.clean("Call me at six. Scratch that. Text me instead."), "Text me instead.")
     }

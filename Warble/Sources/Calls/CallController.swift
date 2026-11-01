@@ -12,6 +12,8 @@ final class CallController: ObservableObject {
         case recording(appName: String)
         case saving
         case saved(URL)
+        /// Saved in Unfiled; asking where it should go.
+        case filing(URL)
     }
 
     @Published private(set) var state: State = .idle
@@ -20,6 +22,16 @@ final class CallController: ObservableObject {
     @Published private(set) var liveOthers = ""
     @Published private(set) var recordingStarted: Date?
     @Published private(set) var lastError: String?
+    /// Where the last call was filed and why, e.g. "Filed in 1-1s/Sarah (same person)".
+    @Published private(set) var filedNote: String?
+    /// Folders to offer when asking where a call should go.
+    @Published private(set) var filingSuggestions: [FilingSuggestion] = []
+    /// Remembers where calls go, so it can file them without asking.
+    let filing = FilingStore()
+    private let calendar = CalendarLookup()
+    private var meeting: MeetingInfo?
+    /// The saved call waiting to be filed (or re-filed).
+    private var lastSaved: (url: URL, transcript: CallTranscript, features: CallFeatures)?
 
     /// A voice Warble doesn't know yet, waiting for "Who is talking?".
     struct UnknownVoice: Equatable {
@@ -80,6 +92,7 @@ final class CallController: ObservableObject {
 
     private func callStarted(_ call: CallDetector.ActiveCall) {
         guard state == .idle || isSavedState else { return }
+        // A new call while the last one is waiting to be filed: it stays in Unfiled.
         pendingCall = call
         state = .asking(appName: call.app.name)
     }
@@ -97,8 +110,10 @@ final class CallController: ObservableObject {
     }
 
     private var isSavedState: Bool {
-        if case .saved = state { return true }
-        return false
+        switch state {
+        case .saved, .filing: return true
+        default: return false
+        }
     }
 
     // MARK: - User actions
@@ -133,6 +148,7 @@ final class CallController: ObservableObject {
         self.recorder = recorder
         transcript = recorder.transcript
         recordingStarted = Date()
+        meeting = calendar.meeting(at: Date(), appName: app.name)
         state = .recording(appName: app.name)
         if appState.recognitionModel == .parakeet {
             // Have Parakeet ready by the time the call ends.
@@ -178,16 +194,34 @@ final class CallController: ObservableObject {
             s.text = TextCleaner.applyReplacements(s.text, lexicon.replacements)
             return s
         }
-        transcript = finished
+        // The meeting may have been added to the calendar during the call.
+        finished.meeting = meeting ?? calendar.meeting(at: finished.started, appName: finished.appName)
+        meeting = nil
         guard !finished.segments.isEmpty else {
+            transcript = finished
             state = .idle
             return
         }
+        let features = CallFeatures(seriesID: finished.meeting?.seriesID, meetingTitle: finished.meeting?.title,
+                                    people: finished.people, date: finished.started)
+        let sure = filing.autoFolder(for: features)
+        finished.category = sure?.folder ?? "Unfiled"
+        transcript = finished
         do {
             let url = try save(finished)
             lexicon.harvest(from: finished.plainText)
-            state = .saved(url)
-            scheduleHide(after: 8)
+            lastSaved = (url, finished, features)
+            if let sure {
+                filing.learn(features, folder: sure.folder)
+                filedNote = "Filed in \(sure.folder) (\(sure.reason))."
+                state = .saved(url)
+                scheduleHide(after: 10)
+            } else {
+                filedNote = nil
+                filingSuggestions = filing.suggestions(for: features)
+                hideTask?.cancel()
+                state = .filing(url)
+            }
         } catch {
             lastError = "Couldn't save the transcript: \(error.localizedDescription)"
             state = .idle
@@ -280,6 +314,60 @@ final class CallController: ObservableObject {
         return "Speaker \(number)"
     }
 
+    // MARK: - Filing
+
+    /// Moves the last saved call into `folder` (a path under Calls, e.g.
+    /// "1-1s/Sarah Jones") and remembers the choice for next time.
+    func file(into folder: String) {
+        guard let saved = lastSaved else { return }
+        let cleaned = FolderName.clean(folder)
+        guard !cleaned.isEmpty else { return leaveUnfiled() }
+        if cleaned == saved.transcript.category {
+            filing.learn(saved.features, folder: cleaned)
+            filedNote = "Filed in \(cleaned)."
+            state = .saved(saved.url)
+            scheduleHide(after: 6)
+            return
+        }
+        var moved = saved.transcript
+        moved.category = cleaned
+        do {
+            let url = try save(moved)
+            if url != saved.url { try? FileManager.default.removeItem(at: saved.url) }
+            filing.learn(saved.features, folder: cleaned)
+            lastSaved = (url, moved, saved.features)
+            transcript = moved
+            filedNote = "Filed in \(cleaned). Warble will remember this."
+            state = .saved(url)
+            scheduleHide(after: 8)
+        } catch {
+            lastError = "Couldn't move the transcript: \(error.localizedDescription)"
+            state = .idle
+            showErrorBriefly()
+        }
+    }
+
+    /// Keeps the last call in Unfiled.
+    func leaveUnfiled() {
+        guard let saved = lastSaved else { state = .idle; return }
+        if saved.transcript.category != "Unfiled" {
+            file(into: "Unfiled")
+            return
+        }
+        filedNote = "Left in Unfiled."
+        state = .saved(saved.url)
+        scheduleHide(after: 6)
+    }
+
+    /// Asks again where the last call should go ("Change folder").
+    func changeFolder() {
+        guard let saved = lastSaved else { return }
+        hideTask?.cancel()
+        filingSuggestions = filing.suggestions(for: saved.features)
+            .filter { $0.folder != saved.transcript.category }
+        state = .filing(saved.url)
+    }
+
     // MARK: - Saving
 
     static var recordingsFolder: URL {
@@ -326,7 +414,7 @@ final class CallController: ObservableObject {
         if lastError != nil && state == .idle { return true }
         if askingWho != nil { return true }
         switch state {
-        case .asking, .saved: return true
+        case .asking, .saved, .filing: return true
         default: return false
         }
     }

@@ -15,6 +15,22 @@ struct CallTranscript: Equatable {
     var ended: Date?
     var segments: [Segment] = []
     var category: String = "Unfiled"
+    /// The calendar meeting this call was, if Warble could tell.
+    var meeting: MeetingInfo?
+
+    /// Labels that aren't real names.
+    static func isPlaceholder(_ speaker: String) -> Bool {
+        speaker == "Me" || speaker == "Others" || speaker.hasPrefix("Speaker ")
+    }
+
+    /// Everyone else on the call by name: invitees and recognised voices.
+    var people: [String] {
+        var names: [String] = []
+        for name in (meeting?.attendees.map(\.name) ?? []) + speakers where !Self.isPlaceholder(name) {
+            if !names.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { names.append(name) }
+        }
+        return names
+    }
 
     var speakers: [String] {
         var seen: [String] = []
@@ -69,7 +85,10 @@ struct CallTranscript: Equatable {
     }
 
     var title: String {
-        "\(shortAppName) call \(Self.titleFormatter.string(from: started))"
+        if let name = meeting?.title, !name.isEmpty {
+            return "\(name), \(Self.titleFormatter.string(from: started))"
+        }
+        return "\(shortAppName) call \(Self.titleFormatter.string(from: started))"
     }
 
     var shortAppName: String {
@@ -78,7 +97,14 @@ struct CallTranscript: Equatable {
 
     /// File name, safe for every file system, e.g. "2026-10-31 1400 Teams call.md".
     var fileName: String {
-        "\(Self.fileFormatter.string(from: started)) \(shortAppName) call.md"
+        let name = meeting.map { FolderName.fileName($0.title) }.flatMap { $0.isEmpty ? nil : $0 }
+            ?? "\(shortAppName) call"
+        return "\(Self.fileFormatter.string(from: started)) \(String(name.prefix(80))).md"
+    }
+
+    /// An Obsidian link to a person's note, e.g. [[Sarah Jones]].
+    static func link(_ name: String) -> String {
+        "[[\(FolderName.fileName(name))]]"
     }
 
     /// Markdown with YAML front matter, ready for Obsidian.
@@ -90,12 +116,23 @@ struct CallTranscript: Equatable {
         lines.append("duration_minutes: \(Int((duration / 60).rounded()))")
         lines.append("app: \(yaml(appName))")
         lines.append("speakers: [\(speakers.map(yaml).joined(separator: ", "))]")
+        if !people.isEmpty {
+            lines.append("people: [\(people.map { "\"\(Self.link($0))\"" }.joined(separator: ", "))]")
+        }
+        if let meeting {
+            lines.append("meeting: \(yaml(meeting.title))")
+            if let organizer = meeting.organizer { lines.append("organizer: \(yaml(organizer))") }
+        }
         lines.append("category: \(yaml(category))")
-        lines.append("tags: [call, warble]")
+        lines.append("tags: [\((["call", "warble"] + (meeting?.seriesID != nil ? ["recurring"] : [])).joined(separator: ", "))]")
         lines.append("---")
         lines.append("")
         lines.append("# \(title)")
         lines.append("")
+        if !people.isEmpty {
+            lines.append("With " + people.map(Self.link).joined(separator: ", "))
+            lines.append("")
+        }
         for segment in merged {
             lines.append("**\(segment.speaker)** (\(Self.timestamp(segment.offset))): \(segment.text)")
             lines.append("")

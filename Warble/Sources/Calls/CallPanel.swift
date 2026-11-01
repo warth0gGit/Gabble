@@ -65,6 +65,7 @@ final class CallPanel {
 struct CallPanelView: View {
     @EnvironmentObject private var calls: CallController
     @State private var whoName = ""
+    @State private var newFolder = ""
 
     var body: some View {
         card
@@ -126,16 +127,71 @@ struct CallPanelView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let note = calls.filedNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    Button("Change folder") { calls.changeFolder() }
                     Spacer()
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     Button("Open") { NSWorkspace.shared.open(url) }
                         .buttonStyle(.borderedProminent)
                 }
+            case .filing:
+                filingChoice
             case .idle:
                 EmptyView()
             }
         }
+    }
+
+    /// "Where should this call go?": Warble's best guesses, a box for a new
+    /// folder, or leave it in Unfiled. The choice is remembered for next time.
+    @ViewBuilder
+    private var filingChoice: some View {
+        Label("Where should this call go?", systemImage: "folder")
+            .font(.headline)
+        if let title = calls.transcript?.meeting?.title, !title.isEmpty {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        ForEach(calls.filingSuggestions, id: \.folder) { suggestion in
+            Button {
+                calls.file(into: suggestion.folder)
+            } label: {
+                HStack {
+                    Image(systemName: suggestion.reason == "new folder" ? "folder.badge.plus" : "folder.fill")
+                    Text(suggestion.folder).lineLimit(1)
+                    Spacer()
+                    Text(suggestion.reason).font(.caption2).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+        }
+        HStack {
+            TextField("New folder, e.g. 1-1s/Sarah", text: $newFolder)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(fileInNewFolder)
+            Button("File", action: fileInNewFolder)
+                .disabled(newFolder.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        Button("Leave in Unfiled") { calls.leaveUnfiled() }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func fileInNewFolder() {
+        let folder = newFolder.trimmingCharacters(in: .whitespaces)
+        guard !folder.isEmpty else { return }
+        calls.file(into: folder)
+        newFolder = ""
     }
 
     /// "Identify Speaker": a black card with the Warble logo and a name box.

@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import ApplicationServices
 import CoreGraphics
+import EventKit
 import Speech
 
 /// Tracks the macOS permissions Warble needs and helps the user grant them.
@@ -21,7 +22,7 @@ final class PermissionsManager: ObservableObject {
     }
 
     enum Kind: String, CaseIterable, Identifiable {
-        case microphone, speechRecognition, accessibility, systemAudio
+        case microphone, speechRecognition, accessibility, systemAudio, calendar
 
         var id: String { rawValue }
 
@@ -31,6 +32,7 @@ final class PermissionsManager: ObservableObject {
             case .speechRecognition: return "Speech recognition"
             case .accessibility: return "Accessibility"
             case .systemAudio: return "Call audio recording"
+            case .calendar: return "Calendar (optional)"
             }
         }
 
@@ -44,6 +46,8 @@ final class PermissionsManager: ObservableObject {
                 return "So Warble can type your words into whatever app you are using, like Claude or Word."
             case .systemAudio:
                 return "So Warble can hear the other people on Teams or Zoom calls. Needed for call transcription."
+            case .calendar:
+                return "So Warble can see which meeting a call is, who was invited and whether it repeats, to name and file the transcript for you."
             }
         }
 
@@ -54,11 +58,12 @@ final class PermissionsManager: ObservableObject {
             case .speechRecognition: return URL(string: base + "Privacy_SpeechRecognition")
             case .accessibility: return URL(string: base + "Privacy_Accessibility")
             case .systemAudio: return URL(string: base + "Privacy_ScreenCapture")
+            case .calendar: return URL(string: base + "Privacy_Calendars")
             }
         }
 
         /// Permissions needed for dictation, the first feature.
-        var requiredForDictation: Bool { self != .systemAudio }
+        var requiredForDictation: Bool { self != .systemAudio && self != .calendar }
     }
 
     @Published private(set) var statuses: [Kind: Status] = [:]
@@ -102,6 +107,12 @@ final class PermissionsManager: ObservableObject {
             updated[.systemAudio] = systemAudioRequested ? .needsRelaunch : .notAsked
         }
 
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess: updated[.calendar] = .granted
+        case .notDetermined: updated[.calendar] = .notAsked
+        default: updated[.calendar] = .denied
+        }
+
         statuses = updated
     }
 
@@ -125,6 +136,12 @@ final class PermissionsManager: ObservableObject {
             }
             systemAudioRequested = true
             refresh()
+        case .calendar:
+            Task {
+                let granted = (try? await EKEventStore().requestFullAccessToEvents()) ?? false
+                if !granted { openSettings(for: kind) }
+                refresh()
+            }
         }
     }
 

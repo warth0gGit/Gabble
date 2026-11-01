@@ -6,7 +6,7 @@ enum TextCleaner {
     static let fillers = ["um", "umm", "uh", "uhh", "er", "erm", "ah", "hmm", "mm"]
 
     /// Phrases that throw away what was said just before them in the same dictation.
-    static let scratchPhrases = ["scratch that", "stratch that", "scrap that", "delete that", "strike that"]
+    static let scratchPhrases = ["scratch that", "scratched that", "stratch that", "scrap that", "delete that", "strike that"]
 
     struct Replacement: Equatable {
         var heard: String
