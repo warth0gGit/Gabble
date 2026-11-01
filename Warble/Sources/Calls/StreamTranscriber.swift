@@ -17,7 +17,7 @@ final class StreamTranscriber: @unchecked Sendable {
     private var converter: AVAudioConverter?
 
     func start(hints: [String]) async throws {
-        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) else {
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: SpeechAccent.saved().locale) else {
             throw SpeechEngineError.languageNotSupported
         }
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [],

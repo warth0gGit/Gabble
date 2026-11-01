@@ -90,4 +90,19 @@ final class RecognitionModelTests: XCTestCase {
         defaults.set("whisperLargeV3Turbo", forKey: "recognitionModel")
         XCTAssertEqual(AppState(defaults: defaults).recognitionModel, .appleOnDevice)
     }
+
+    func testAccentDefaultsToMacAndIsSaved() {
+        let defaults = UserDefaults(suiteName: "warble-tests-\(UUID().uuidString)")!
+        let state = AppState(defaults: defaults)
+        XCTAssertEqual(state.speechAccent, .matchMac)
+        state.speechAccent = .british
+        XCTAssertEqual(SpeechAccent.saved(in: defaults), .british)
+        XCTAssertEqual(AppState(defaults: defaults).speechAccent, .british)
+    }
+
+    func testAccentLocales() {
+        XCTAssertEqual(SpeechAccent.british.locale.identifier, "en_GB")
+        XCTAssertEqual(SpeechAccent.american.locale.identifier, "en_US")
+        XCTAssertEqual(SpeechAccent.matchMac.locale, Locale.current)
+    }
 }

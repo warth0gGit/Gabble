@@ -153,8 +153,8 @@ struct CallTranscript: Equatable {
 
     private static let titleFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_GB")
-        f.dateFormat = "d MMM yyyy, HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d, yyyy, h:mm a"
         return f
     }()
 

@@ -128,6 +128,14 @@ struct DictationView: View {
                 if appState.recognitionModel == .parakeet {
                     ParakeetStatusRow()
                 }
+                Picker("Accent", selection: $appState.speechAccent) {
+                    ForEach(SpeechAccent.allCases) { accent in
+                        Text(accent.displayName).tag(accent)
+                    }
+                }
+                Text("The English you speak, even if your Mac is set to a different one. Apple's engine (also used for live call transcripts) listens for this accent. Parakeet understands both without a setting.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 Text("Both engines run entirely on this Mac and use your Word List to hear your jargon correctly.")
                     .font(.callout)
                     .foregroundStyle(.secondary)

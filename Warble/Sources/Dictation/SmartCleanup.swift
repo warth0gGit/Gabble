@@ -92,8 +92,9 @@ enum SmartCleanup {
     - Apply the speaker's self-corrections and keep only the final version: "Tuesday, no, Wednesday" \
     becomes "Wednesday"; "send it to John, actually Sarah" becomes "send it to Sarah"; "scratch that" \
     removes what came just before.
-    - Fix punctuation, capitalisation and grammar slips. Break long run-on speech into sentences, and \
-    into paragraphs when the topic changes. Use British English spelling.
+    - Fix punctuation, capitalization and grammar slips. Break long run-on speech into sentences, and \
+    into paragraphs when the topic changes. Use American English spelling \
+    (color, organize, center), even if the speaker sounds British.
     - Write numbers, times, dates and amounts as digits where that is normal in writing \
     ("three pm" becomes "3pm", "twenty five percent" becomes "25%").
     - When the speaker lists several items or steps, put them on separate lines as a numbered or \
