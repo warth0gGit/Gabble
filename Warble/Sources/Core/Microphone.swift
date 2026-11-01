@@ -68,15 +68,15 @@ enum InputDevices {
 /// Which microphone dictation uses. Saved in Settings.
 enum MicrophoneChoice {
     static let defaultsKey = "dictationMicrophone"
-    /// Whatever the Mac's Sound settings use (AirPods, when they're in).
+    /// Whatever the Mac's Sound settings use (AirPods, when they're in). The
+    /// default: Jonny wears AirPods almost all the time.
     static let systemDefault = ""
-    /// The Mac's own microphone, even with AirPods in. The default: it avoids
-    /// switching AirPods into their lower-quality call mode, which is slow,
-    /// unreliable and makes music sound like a phone call.
+    /// The Mac's own microphone, even with AirPods in. Instant, and AirPods stay
+    /// in music mode, but it hears more of the room.
     static let builtIn = "builtin"
 
     static func saved(in defaults: UserDefaults = .standard) -> String {
-        defaults.string(forKey: defaultsKey) ?? builtIn
+        defaults.string(forKey: defaultsKey) ?? systemDefault
     }
 
     /// The device to record from, or nil for the Mac's default. A chosen

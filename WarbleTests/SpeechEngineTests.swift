@@ -114,9 +114,9 @@ final class MicrophoneChoiceTests: XCTestCase {
     private let airPods = InputDevice(id: 2, uid: "AA-BB:input", name: "Jonny's AirPods Pro",
                                       isBuiltIn: false, isBluetooth: true)
 
-    func testDefaultsToBuiltIn() {
+    func testDefaultsToTheMacsSoundSettings() {
         let defaults = UserDefaults(suiteName: "warble-tests-\(UUID().uuidString)")!
-        XCTAssertEqual(MicrophoneChoice.saved(in: defaults), MicrophoneChoice.builtIn)
+        XCTAssertEqual(MicrophoneChoice.saved(in: defaults), MicrophoneChoice.systemDefault)
     }
 
     func testPicksTheRightDevice() {

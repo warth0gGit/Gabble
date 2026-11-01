@@ -699,14 +699,14 @@ struct MicrophonePicker: View {
 
     var body: some View {
         Picker("Microphone", selection: $selection) {
-            Text("Mac's built-in microphone (recommended)").tag(MicrophoneChoice.builtIn)
-            Text("Same as Sound settings").tag(MicrophoneChoice.systemDefault)
+            Text("Same as Sound settings (AirPods when they're in)").tag(MicrophoneChoice.systemDefault)
+            Text("Mac's built-in microphone").tag(MicrophoneChoice.builtIn)
             ForEach(devices.filter { !$0.isBuiltIn }) { device in
                 Text(device.name).tag(device.uid)
             }
         }
         .onAppear { devices = InputDevices.all() }
-        Text("The built-in microphone keeps working when AirPods are in, without switching them into call mode (which is slow and makes music sound like a phone call).")
+        Text("AirPods hear you best, but each dictation switches them into call mode for a moment, so music sounds like a phone call until you stop. The Mac's built-in microphone starts instantly and leaves your AirPods alone.")
             .font(.callout)
             .foregroundStyle(.secondary)
     }
