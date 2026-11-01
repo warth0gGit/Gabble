@@ -1,7 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The small floating capsule at the bottom of the screen while dictating.
+/// The small floating capsule at the bottom of the screen while dictating:
+/// shows the mic is on, how loud you are and how long you've been talking.
+/// Words go straight into your app (as Wispr Flow does), not into the capsule.
 /// It never takes focus, so text still goes to the app you were using.
 @MainActor
 final class DictationHUD {
@@ -46,18 +48,6 @@ struct DictationHUDView: View {
     var body: some View {
         VStack(spacing: 8) {
             Spacer(minLength: 0)
-            if !controller.liveText.isEmpty, controller.phase == .listening {
-                Text(controller.liveText)
-                    .font(.callout)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(2)
-                    .truncationMode(.head)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(WarbleColor.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WarbleColor.line, lineWidth: 1))
-                    .frame(maxWidth: 400)
-            }
             capsule
         }
         .frame(width: 420, height: 120, alignment: .bottom)

@@ -63,7 +63,7 @@ struct DictationView: View {
                 .font(.callout)
                 Toggle("Show words as I speak", isOn: $appState.liveTyping)
                 Text(appState.liveTyping
-                     ? "Words appear in the text box phrase by phrase while you talk, then get tidied up when you finish."
+                     ? "In Mac apps like Notes and Mail, words appear in the text box while you talk, then get tidied up when you finish. In the Claude app, Slack, Teams and browsers, the tidied text is typed when you finish, because those apps can't swap words reliably."
                      : "Your words appear all at once, already tidied, when you finish.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
