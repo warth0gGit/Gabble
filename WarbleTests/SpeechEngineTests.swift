@@ -91,6 +91,7 @@ final class RecognitionModelTests: XCTestCase {
         XCTAssertEqual(AppState(defaults: defaults).recognitionModel, .appleOnDevice)
     }
 
+    @MainActor
     func testAccentDefaultsToMacAndIsSaved() {
         let defaults = UserDefaults(suiteName: "warble-tests-\(UUID().uuidString)")!
         let state = AppState(defaults: defaults)
