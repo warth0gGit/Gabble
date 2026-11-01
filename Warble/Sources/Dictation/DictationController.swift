@@ -122,9 +122,10 @@ final class DictationController: ObservableObject {
             stopPressedAt = Date()
             return
         }
-        if isStuck || isPreparing && Date().timeIntervalSince(phaseChangedAt) > 1 {
-            // Pressing again while Warble is still getting ready, or when it has
-            // stalled, resets dictation.
+        // macOS can send a stray Fn press while dictation is still starting, so
+        // presses then are ignored; only a dictation that has stalled is reset.
+        // (A click on the menu bar icon, which is always deliberate, can cancel.)
+        if isStuck {
             Task { await cancel() }
             return
         }
@@ -229,6 +230,9 @@ final class DictationController: ObservableObject {
             }
             startedAt = Date()
             phase = .listening
+            // Measure the "ignore stray presses" moment from when listening
+            // actually begins: starting the engine can take a second or two.
+            if isHandsFree { handsFreeSince = Date() }
             // The key may have been released while the engine was starting.
             if !handsFree && pressedAt == nil && !isHandsFree {
                 await finish()
