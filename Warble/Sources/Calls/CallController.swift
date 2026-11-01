@@ -189,10 +189,11 @@ final class CallController: ObservableObject {
         recordingStarted = nil
         liveMe = ""
         liveOthers = ""
-        finished.segments = finished.segments.map { segment in
+        // Word List fixes, then the light tidy-up (on every call, however short).
+        finished.segments = finished.segments.compactMap { segment in
             var s = segment
-            s.text = TextCleaner.applyReplacements(s.text, lexicon.replacements)
-            return s
+            s.text = TextCleaner.tidyCall(TextCleaner.applyReplacements(s.text, lexicon.replacements))
+            return s.text.isEmpty ? nil : s
         }
         // The meeting may have been added to the calendar during the call.
         finished.meeting = meeting ?? calendar.meeting(at: finished.started, appName: finished.appName)

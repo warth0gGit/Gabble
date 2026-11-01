@@ -71,6 +71,27 @@ final class TextCleanerTests: XCTestCase {
     }
 }
 
+final class CallTidyTests: XCTestCase {
+    func testRemovesFillersAndStutters() {
+        XCTAssertEqual(TextCleaner.tidyCall("I'm just going to uh type real quick. Uh what type, sorry."),
+                       "I'm just going to type real quick. What type, sorry.")
+        XCTAssertEqual(TextCleaner.tidyCall("so the the plan is um fine"), "So the plan is fine")
+    }
+
+    func testKeepsDictationCommandsAsWords() {
+        XCTAssertEqual(TextCleaner.tidyCall("Put it on a new line, then scratch that idea."),
+                       "Put it on a new line, then scratch that idea.")
+    }
+
+    func testKeepsRepeatedQuestions() {
+        XCTAssertEqual(TextCleaner.tidyCall("Does it work? Does it work?"), "Does it work? Does it work?")
+    }
+
+    func testFillerOnlyBecomesEmpty() {
+        XCTAssertEqual(TextCleaner.tidyCall("Uh."), "")
+    }
+}
+
 final class CorrectionDiffTests: XCTestCase {
     func testFindsEditInsideInsertedText() {
         let edited = CorrectionDiff.editedVersion(

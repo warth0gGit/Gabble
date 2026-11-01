@@ -26,6 +26,20 @@ enum TextCleaner {
         return text
     }
 
+    /// The light tidy-up for call transcripts: drops ums, uhs and repeated
+    /// words, and fixes spacing and capitals. Never rewrites what was said, and
+    /// leaves out the dictation-only commands ("scratch that", "new line"),
+    /// which in a conversation are just words.
+    static func tidyCall(_ input: String) -> String {
+        var text = input
+        text = removeFillers(text)
+        text = removeInterruptingFillers(text)
+        text = removeStutters(text)
+        text = tidySpacing(text)
+        text = capitaliseSentences(text)
+        return text
+    }
+
     static func applyScratch(_ text: String) -> String {
         var result = text
         for phrase in scratchPhrases {
