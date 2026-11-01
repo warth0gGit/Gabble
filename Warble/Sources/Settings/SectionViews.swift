@@ -112,14 +112,21 @@ struct DictationView: View {
             Section("Speech engine") {
                 Picker("Model", selection: $appState.recognitionModel) {
                     ForEach(RecognitionModel.allCases) { model in
-                        Text(model.displayName + (model.isAvailable ? "" : " (coming soon)"))
-                            .tag(model)
-                            .selectionDisabled(!model.isAvailable)
+                        Text(model.displayName).tag(model)
                     }
                 }
-                Text("All models run on this Mac. Your Word List is used to help it hear your jargon correctly.")
+                Text(appState.recognitionModel.summary)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if appState.recognitionModel == .parakeet {
+                    ParakeetStatusRow()
+                }
+                Text("Both engines run entirely on this Mac and use your Word List to hear your jargon correctly.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .onChange(of: appState.recognitionModel, initial: true) { _, model in
+                if model == .parakeet { ParakeetStatus.shared.warmUp() }
             }
 
             Section("Cleanup") {
@@ -472,5 +479,34 @@ extension Bundle {
         let version = infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let build = infoDictionary?["CFBundleVersion"] as? String ?? "?"
         return "\(version) (\(build))"
+    }
+}
+
+/// Shows whether the Parakeet model has downloaded yet.
+struct ParakeetStatusRow: View {
+    @ObservedObject private var status = ParakeetStatus.shared
+
+    var body: some View {
+        switch status.state {
+        case .unknown, .downloading:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Downloading Parakeet from Hugging Face (first time only)…")
+                    .font(.callout)
+            }
+        case .ready:
+            Label("Parakeet is ready.", systemImage: "checkmark.circle.fill")
+                .font(.callout)
+                .foregroundStyle(.green)
+        case .failed(let message):
+            HStack {
+                Label("Parakeet couldn't download: \(message). Apple's engine is used until it does.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                Spacer()
+                Button("Try again") { status.warmUp() }
+            }
+        }
     }
 }

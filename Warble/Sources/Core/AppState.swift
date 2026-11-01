@@ -1,11 +1,9 @@
 import Foundation
 import SwiftUI
 
-/// Speech engines the user can choose between. Only Apple's is wired up so far;
-/// the others are placeholders for on-device Hugging Face models.
+/// Speech engines the user can choose between. Both run entirely on this Mac.
 enum RecognitionModel: String, CaseIterable, Identifiable {
     case appleOnDevice
-    case whisperLargeV3Turbo
     case parakeet
 
     var id: String { rawValue }
@@ -13,12 +11,18 @@ enum RecognitionModel: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .appleOnDevice: return "Apple on-device (built in)"
-        case .whisperLargeV3Turbo: return "Whisper Large v3 Turbo (Hugging Face)"
         case .parakeet: return "NVIDIA Parakeet (Hugging Face)"
         }
     }
 
-    var isAvailable: Bool { self == .appleOnDevice }
+    var summary: String {
+        switch self {
+        case .appleOnDevice:
+            return "Built into macOS. Smooth live typing and nothing to download."
+        case .parakeet:
+            return "Faster, better with names and jargon from your Word List, and re-reads each call recording when the call ends for a cleaner transcript. Downloads about 700 MB once."
+        }
+    }
 }
 
 /// App-wide settings, saved automatically between launches.
