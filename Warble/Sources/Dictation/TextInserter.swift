@@ -127,6 +127,7 @@ enum TextInserter {
     /// boxes from Accessibility until an assistive app asks for them. Asking
     /// lets Warble read what's in the box, so it can learn from your corrections.
     static func enableAccessibilityForFrontmostApp() {
+        limitAccessibilityWaits()
         guard let app = NSWorkspace.shared.frontmostApplication,
               !accessibilityEnabledApps.contains(app.processIdentifier),
               let bundle = app.bundleURL else { return }
@@ -138,6 +139,17 @@ enum TextInserter {
     }
 
     private static var accessibilityEnabledApps: Set<pid_t> = []
+
+    /// Accessibility questions go to the other app and wait for its answer
+    /// (up to 6 s by default). A busy app must never hold up dictation, so
+    /// Warble waits at most half a second for any answer.
+    static func limitAccessibilityWaits() {
+        guard !accessibilityWaitsLimited else { return }
+        accessibilityWaitsLimited = true
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5)
+    }
+
+    private static var accessibilityWaitsLimited = false
 
     /// True when the focused text box is a normal Mac text field whose text
     /// Warble can read. Web-based boxes (the Claude app, Slack, browsers) don't

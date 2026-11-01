@@ -36,8 +36,11 @@ enum DictationKey: String, CaseIterable, Identifiable {
 /// Needs the Accessibility permission to see key presses in other apps.
 @MainActor
 final class HotkeyMonitor {
-    var onPress: (() -> Void)?
-    var onRelease: (() -> Void)?
+    /// Called with when the key went down or up (seconds since the Mac started,
+    /// from the key event itself), so a busy moment in Warble can't make a
+    /// quick tap look like a long hold.
+    var onPress: ((TimeInterval) -> Void)?
+    var onRelease: ((TimeInterval) -> Void)?
 
     private var monitors: [Any] = []
     private var key: DictationKey = .fn
@@ -70,6 +73,6 @@ final class HotkeyMonitor {
         let down = event.modifierFlags.contains(key.flag)
         guard down != isDown else { return }
         isDown = down
-        if down { onPress?() } else { onRelease?() }
+        if down { onPress?(event.timestamp) } else { onRelease?(event.timestamp) }
     }
 }

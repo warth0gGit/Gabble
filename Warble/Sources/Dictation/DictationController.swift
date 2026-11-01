@@ -41,6 +41,8 @@ final class DictationController: ObservableObject {
     private let correctionWatcher = CorrectionWatcher()
     private var hud: DictationHUD?
     private var pressedAt: Date?
+    /// When the key went down, by the key event's own clock.
+    private var pressedEventTime: TimeInterval?
     /// When hands-free dictation began, to ignore stray key presses just after.
     private var handsFreeSince: Date?
     /// Set while the key is down to stop hands-free dictation.
@@ -75,8 +77,8 @@ final class DictationController: ObservableObject {
             engine.onPreparing = { [weak self] message in self?.phase = .preparing(message) }
         }
 
-        hotkey.onPress = { [weak self] in self?.keyPressed() }
-        hotkey.onRelease = { [weak self] in self?.keyReleased() }
+        hotkey.onPress = { [weak self] time in self?.keyPressed(at: time) }
+        hotkey.onRelease = { [weak self] time in self?.keyReleased(at: time) }
 
         appState.$dictationEnabled
             .combineLatest(appState.$dictationKey)
@@ -113,7 +115,7 @@ final class DictationController: ObservableObject {
     // Hold the key to talk and release to finish, or tap it once to keep
     // listening hands-free and tap again to finish.
 
-    private func keyPressed() {
+    private func keyPressed(at eventTime: TimeInterval) {
         if phase == .listening && isHandsFree {
             // Stop when the key comes back up, and ignore stray presses in the first
             // moment (macOS can report the Fn/Globe key again when it shows its own
@@ -131,11 +133,12 @@ final class DictationController: ObservableObject {
         }
         guard phase == .idle else { return }
         pressedAt = Date()
+        pressedEventTime = eventTime
         isHandsFree = false
         Task { await start(handsFree: false) }
     }
 
-    private func keyReleased() {
+    private func keyReleased(at eventTime: TimeInterval) {
         if stopPressedAt != nil {
             stopPressedAt = nil
             if phase == .listening { Task { await finish() } }
@@ -143,7 +146,13 @@ final class DictationController: ObservableObject {
         }
         guard let pressedAt else { return }
         self.pressedAt = nil
-        if Date().timeIntervalSince(pressedAt) < tapThreshold {
+        // Time the tap with the key events' own timestamps. Starting dictation
+        // does some work straight away, and if that delays Warble noticing the
+        // key coming up, measuring "now" would make a quick tap look like a
+        // hold, and dictation would stop the moment it started.
+        let held = pressedEventTime.map { eventTime - $0 } ?? Date().timeIntervalSince(pressedAt)
+        pressedEventTime = nil
+        if held < tapThreshold {
             // A quick tap: keep listening until the next tap.
             isHandsFree = true
             handsFreeSince = Date()
