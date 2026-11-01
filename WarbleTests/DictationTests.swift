@@ -267,3 +267,22 @@ final class FillerAndScratchTests: XCTestCase {
         XCTAssertTrue(out.contains("November"))
     }
 }
+
+@MainActor
+final class TextInserterTests: XCTestCase {
+    func testElectronAppsCountAsWebBased() throws {
+        let app = FileManager.default.temporaryDirectory.appendingPathComponent("Fake-\(UUID().uuidString).app")
+        defer { try? FileManager.default.removeItem(at: app) }
+        let frameworks = app.appendingPathComponent("Contents/Frameworks")
+        try FileManager.default.createDirectory(at: frameworks, withIntermediateDirectories: true)
+        XCTAssertFalse(TextInserter.isWebBased(bundleAt: app))
+        try FileManager.default.createDirectory(at: frameworks.appendingPathComponent("Electron Framework.framework"),
+                                                withIntermediateDirectories: true)
+        XCTAssertTrue(TextInserter.isWebBased(bundleAt: app))
+    }
+
+    func testBrowsersAreWebBased() {
+        XCTAssertTrue(TextInserter.webBrowserBundleIDs.contains("com.google.Chrome"))
+        XCTAssertTrue(TextInserter.webBrowserBundleIDs.contains("com.apple.Safari"))
+    }
+}

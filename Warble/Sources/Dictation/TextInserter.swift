@@ -123,6 +123,27 @@ enum TextInserter {
         return range
     }
 
+    /// Browsers and apps built on web technology (Electron, Chromium), whose
+    /// text boxes can't be edited reliably by selecting and pasting mid-dictation.
+    static func isWebBased(_ app: NSRunningApplication) -> Bool {
+        if let id = app.bundleIdentifier, webBrowserBundleIDs.contains(id) { return true }
+        guard let bundle = app.bundleURL else { return false }
+        return isWebBased(bundleAt: bundle)
+    }
+
+    static func isWebBased(bundleAt bundle: URL) -> Bool {
+        let frameworks = bundle.appendingPathComponent("Contents/Frameworks")
+        return ["Electron Framework.framework", "Chromium Embedded Framework.framework"].contains {
+            FileManager.default.fileExists(atPath: frameworks.appendingPathComponent($0).path)
+        }
+    }
+
+    static let webBrowserBundleIDs: Set<String> = [
+        "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.google.Chrome", "com.google.Chrome.canary",
+        "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser", "org.mozilla.firefox",
+        "com.operasoftware.Opera", "com.vivaldi.Vivaldi", "org.chromium.Chromium",
+    ]
+
     /// Apps built with Electron (Claude, Slack, Teams, VS Code) hide their text
     /// boxes from Accessibility until an assistive app asks for them. Asking
     /// lets Warble read what's in the box, so it can learn from your corrections.
@@ -132,8 +153,7 @@ enum TextInserter {
               !accessibilityEnabledApps.contains(app.processIdentifier),
               let bundle = app.bundleURL else { return }
         accessibilityEnabledApps.insert(app.processIdentifier)
-        let electron = bundle.appendingPathComponent("Contents/Frameworks/Electron Framework.framework")
-        guard FileManager.default.fileExists(atPath: electron.path) else { return }
+        guard isWebBased(bundleAt: bundle) else { return }
         let element = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     }
@@ -156,6 +176,13 @@ enum TextInserter {
     /// reliably honour the key presses Warble uses to swap in tidied text, so
     /// there Warble shows live words in its capsule and types once at the end.
     static func focusedFieldSupportsLiveEditing() -> Bool {
+        // Decide by the app first. Warble asks Electron apps to show their text
+        // boxes to Accessibility (so it can learn from corrections), and once
+        // they do, their boxes look like normal fields, but they don't apply a
+        // selection in time for the paste that follows. Swapping in the
+        // finished words then adds them instead of replacing, typing your
+        // dictation two or three times.
+        if let app = NSWorkspace.shared.frontmostApplication, isWebBased(app) { return false }
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
@@ -167,6 +194,12 @@ enum TextInserter {
               value is String,
               AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success
         else { return false }
+        // Web content (any browser engine) exposes its DOM to Accessibility.
+        var names: CFArray?
+        if AXUIElementCopyAttributeNames(element, &names) == .success,
+           let names = names as? [String], names.contains(where: { $0.hasPrefix("AXDOM") }) {
+            return false
+        }
         // Inside a web page?
         var current: AXUIElement? = element
         for _ in 0..<25 {
