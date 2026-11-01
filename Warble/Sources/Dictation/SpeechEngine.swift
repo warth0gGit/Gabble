@@ -32,7 +32,7 @@ final class SpeechEngine {
     /// Called while the speech model downloads for the first time.
     var onPreparing: ((String) -> Void)?
 
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var resultsTask: Task<Void, Never>?
@@ -135,9 +135,16 @@ final class SpeechEngine {
 
     private func startMicrophone(converting target: AVAudioFormat,
                                  into continuation: AsyncStream<AnalyzerInput>.Continuation) throws {
+        // A fresh audio engine every time. Calls (Teams, Zoom) often switch the
+        // microphone or its sample rate, e.g. a headset going into call mode, and an
+        // engine created earlier keeps the old format. Installing a tap with a stale
+        // format makes macOS end the app.
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+        audioEngine = AVAudioEngine()
         let input = audioEngine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, let converter = AVAudioConverter(from: inputFormat, to: target) else {
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0, let converter = AVAudioConverter(from: inputFormat, to: target) else {
             throw SpeechEngineError.microphoneUnavailable
         }
         let levelHandler: @Sendable (Double) -> Void = { [weak self] level in
