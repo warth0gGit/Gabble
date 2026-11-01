@@ -52,13 +52,15 @@ enum TextInserter {
     }
 
     /// Replaces text Warble just typed (immediately before the cursor) with a
-    /// tidied version. Only does it when the app lets Warble confirm the text
-    /// is really there, so it can never delete anything you typed yourself.
-    /// Returns false if the replacement was skipped.
+    /// tidied version. When the app lets Warble read the field, it first checks
+    /// the typed text is really there, so it never deletes anything you typed
+    /// yourself. Some apps (Claude, Slack and other web-based apps) don't let
+    /// Warble read their text; there it replaces by position, since you were
+    /// dictating rather than typing. Returns false if the replacement was skipped.
     @discardableResult
     static func replaceTyped(_ typed: String, with replacement: String) -> Bool {
-        guard typed != replacement, !typed.isEmpty, !replacement.isEmpty,
-              textBeforeCursorEnds(with: typed) else { return false }
+        guard typed != replacement, !typed.isEmpty, !replacement.isEmpty else { return false }
+        guard check(textBeforeCursorEndsWith: typed) != .differs else { return false }
         let source = CGEventSource(stateID: .hidSystemState)
         let count = typed.count
         for _ in 0..<count {
@@ -72,25 +74,35 @@ enum TextInserter {
         return true
     }
 
-    /// Checks, via Accessibility, that the focused text field has `text` right before the cursor.
-    static func textBeforeCursorEnds(with text: String) -> Bool {
+    enum FieldCheck { case matches, differs, unreadable }
+
+    /// Checks, via Accessibility, whether the focused text field has `text` right before the cursor.
+    static func check(textBeforeCursorEndsWith text: String) -> FieldCheck {
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return .unreadable }
         let element = focused as! AXUIElement
         var value: CFTypeRef?
         var rangeValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
               let full = value as? String,
               AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,
-              let rangeValue, CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return false }
+              let rangeValue, CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return .unreadable }
         var range = CFRange()
-        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range), range.length == 0 else { return false }
+        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range) else { return .unreadable }
+        // Text is selected: the user has done something since; leave it alone.
+        guard range.length == 0 else { return .differs }
         let ns = full as NSString
-        guard range.location >= 0, range.location <= ns.length else { return false }
+        guard range.location >= 0, range.location <= ns.length else { return .unreadable }
+        // Some web views report an empty value even with text in the field.
+        if ns.length == 0 { return .unreadable }
         let before = ns.substring(to: range.location)
-        return normalised(before).hasSuffix(normalised(text))
+        return normalised(before).hasSuffix(normalised(text)) ? .matches : .differs
+    }
+
+    static func textBeforeCursorEnds(with text: String) -> Bool {
+        check(textBeforeCursorEndsWith: text) == .matches
     }
 
     /// Smooths over small changes apps make while you type (curly quotes, line endings).

@@ -34,6 +34,10 @@ final class DictationController: ObservableObject {
     private let correctionWatcher = CorrectionWatcher()
     private var hud: DictationHUD?
     private var pressedAt: Date?
+    /// When hands-free dictation began, to ignore stray key presses just after.
+    private var handsFreeSince: Date?
+    /// Set while the key is down to stop hands-free dictation.
+    private var stopPressedAt: Date?
     private var targetBundleID: String?
     private var cancellables: Set<AnyCancellable> = []
     /// Text typed live into the app during the current dictation.
@@ -87,19 +91,31 @@ final class DictationController: ObservableObject {
 
     private func keyPressed() {
         if phase == .listening && isHandsFree {
-            Task { await finish() }
+            // Stop when the key comes back up, and ignore stray presses in the first
+            // moment (macOS can report the Fn/Globe key again when it shows its own
+            // pop-ups), so a tap to start can't immediately stop dictation.
+            guard Date().timeIntervalSince(handsFreeSince ?? .distantPast) > 0.6 else { return }
+            stopPressedAt = Date()
             return
         }
         guard phase == .idle else { return }
         pressedAt = Date()
+        isHandsFree = false
         Task { await start(handsFree: false) }
     }
 
     private func keyReleased() {
+        if stopPressedAt != nil {
+            stopPressedAt = nil
+            if phase == .listening { Task { await finish() } }
+            return
+        }
         guard let pressedAt else { return }
         self.pressedAt = nil
         if Date().timeIntervalSince(pressedAt) < tapThreshold {
+            // A quick tap: keep listening until the next tap.
             isHandsFree = true
+            handsFreeSince = Date()
             return
         }
         if !isHandsFree, phase == .listening || isPreparing {
@@ -126,7 +142,12 @@ final class DictationController: ObservableObject {
         guard phase == .idle else { return }
         lastError = nil
         liveText = ""
-        isHandsFree = handsFree
+        // For the shortcut key, hold-or-tap is decided by keyPressed/keyReleased;
+        // don't overwrite it here, as the key may already have been released.
+        if handsFree {
+            isHandsFree = true
+            handsFreeSince = Date()
+        }
         targetBundleID = TextInserter.frontmostBundleID
         typer = LivePhraseTyper()
         isLiveTyping = appState.liveTyping && testSink == nil
