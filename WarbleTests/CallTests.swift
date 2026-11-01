@@ -28,6 +28,20 @@ final class CallTranscriptTests: XCTestCase {
         XCTAssertTrue(t.fileName.hasSuffix(" Teams call.md"))
     }
 
+    func testDatesAreInLocalTimeNotUTC() {
+        var t = CallTranscript(appName: "Microsoft Teams", started: start)
+        t.add(speaker: "Me", text: "Hello.", at: start.addingTimeInterval(5))
+        t.ended = start.addingTimeInterval(60)
+        let local = DateFormatter()
+        local.locale = Locale(identifier: "en_US_POSIX")
+        local.timeZone = .current
+        local.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let md = t.markdown
+        XCTAssertTrue(md.contains("date: \(local.string(from: start))\n"))
+        XCTAssertTrue(md.contains("ended: \(local.string(from: start.addingTimeInterval(60)))\n"))
+        XCTAssertFalse(md.contains("Z\n"))
+    }
+
     func testRelabelAndSpokenRange() {
         var t = CallTranscript(appName: "Zoom", started: start)
         t.add(speaker: "Others", text: "one two three four five", at: start.addingTimeInterval(10))
