@@ -206,11 +206,13 @@ final class CallController: ObservableObject {
                                     people: finished.people, date: finished.started)
         let sure = filing.autoFolder(for: features)
         finished.category = sure?.folder ?? "Unfiled"
+        finished.summary = initialSummaryState(for: finished)
         transcript = finished
         do {
             let url = try save(finished)
             lexicon.harvest(from: finished.plainText)
             lastSaved = (url, finished, features)
+            if finished.summary == .pending { summarise(finished, savedAt: url) }
             if let sure {
                 filing.learn(features, folder: sure.folder)
                 filedNote = "Filed in \(sure.folder) (\(sure.reason))."
@@ -312,6 +314,56 @@ final class CallController: ObservableObject {
         }
         let number = (unknown.firstIndex(of: id) ?? 0) + 2
         return "Speaker \(number)"
+    }
+
+    // MARK: - Summary
+
+    /// Whether to write a summary, so the note can say one is on its way (or why not).
+    private func initialSummaryState(for transcript: CallTranscript) -> CallSummaryState {
+        guard CallSummariser.isWorthSummarising(transcript) else { return .none }
+        guard SmartCleanup.isAvailable else {
+            return .failed(SmartCleanup.unavailableReason ?? "Apple Intelligence isn't available on this Mac.")
+        }
+        return .pending
+    }
+
+    /// Writes the summary in the background, then adds it to the saved note.
+    /// The transcript is already saved, and filing carries on meanwhile.
+    private func summarise(_ transcript: CallTranscript, savedAt url: URL) {
+        let terms = lexicon.recognitionHints
+        Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                await CallSummariser.summarise(transcript, terms: terms)
+            }.value
+            self?.addSummary(result, to: transcript, savedAt: url)
+        }
+    }
+
+    private func addSummary(_ result: CallSummaryState, to call: CallTranscript, savedAt url: URL) {
+        // Usually the call is still the last one saved; it may have been moved
+        // to another folder since, so use where it is now.
+        if var saved = lastSaved, saved.transcript.started == call.started, saved.transcript.appName == call.appName {
+            saved.transcript.summary = result
+            lastSaved = saved
+            if transcript?.started == call.started { transcript = saved.transcript }
+            try? saved.transcript.markdown.write(to: saved.url, atomically: true, encoding: .utf8)
+            return
+        }
+        // A newer call has been saved since. Find this one's note by name.
+        guard let current = locate(url) else { return }
+        var updated = call
+        updated.summary = result
+        let folder = current.deletingLastPathComponent().standardizedFileURL.path
+        let calls = callsFolder.standardizedFileURL.path
+        if folder.hasPrefix(calls + "/") { updated.category = String(folder.dropFirst(calls.count + 1)) }
+        try? updated.markdown.write(to: current, atomically: true, encoding: .utf8)
+    }
+
+    /// Where a saved note is now: the same place, or another folder under Calls.
+    private func locate(_ url: URL) -> URL? {
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        guard let enumerator = FileManager.default.enumerator(at: callsFolder, includingPropertiesForKeys: nil) else { return nil }
+        return enumerator.compactMap { $0 as? URL }.first { $0.lastPathComponent == url.lastPathComponent }
     }
 
     // MARK: - Filing
