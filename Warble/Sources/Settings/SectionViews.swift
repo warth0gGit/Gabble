@@ -452,9 +452,12 @@ struct FilingView: View {
                     .foregroundStyle(.secondary)
             }
             Section("How Warble files calls") {
-                Text("When a call ends, Warble looks at which meeting it was, who was on it and when it happens. If it has filed a call like it before, it puts it in the same folder and tells you; otherwise it asks once and remembers your answer.")
+                Text(CalendarLookup.isEnabled
+                     ? "When a call ends, Warble looks at which meeting it was, who was on it and when it happens. If it has filed a call like it before, it puts it in the same folder and tells you; otherwise it asks once and remembers your answer."
+                     : "When a call ends, Warble looks at who was on it and when it happens. If it has filed a call like it before, it puts it in the same folder and tells you; otherwise it asks once and remembers your answer.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if CalendarLookup.isEnabled {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Calendar").font(.headline)
@@ -470,6 +473,7 @@ struct FilingView: View {
                     } else {
                         Button("Allow") { permissions.request(.calendar) }
                     }
+                }
                 }
             }
             FilingRulesSection(store: calls.filing)
@@ -496,7 +500,7 @@ struct PermissionsView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            ForEach(PermissionsManager.Kind.allCases) { kind in
+            ForEach(PermissionsManager.Kind.shown) { kind in
                 Section {
                     HStack(alignment: .top, spacing: 12) {
                         statusIcon(permissions.status(kind))

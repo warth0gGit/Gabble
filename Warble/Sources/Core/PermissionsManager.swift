@@ -62,6 +62,10 @@ final class PermissionsManager: ObservableObject {
             }
         }
 
+        /// The permissions Settings lists. Calendar is hidden while calendar
+        /// features are off.
+        static var shown: [Kind] { allCases.filter { $0 != .calendar || CalendarLookup.isEnabled } }
+
         /// Permissions needed for dictation, the first feature.
         var requiredForDictation: Bool { self != .systemAudio && self != .calendar }
     }

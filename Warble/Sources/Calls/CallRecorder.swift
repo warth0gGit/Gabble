@@ -14,6 +14,9 @@ final class CallRecorder {
     var onVoices: (([VoiceSegment]) -> Void)?
     /// Recognises who is speaking on the other side of the call.
     let speakers: SpeakerIdentifier
+    /// Whether you, or the other side, are talking right now (from sound levels).
+    let meMeter = SpeakingMeter(threshold: 0.02)
+    let othersMeter = SpeakingMeter(threshold: 0.008)
 
     private let microphone = MicrophoneCapture()
     private let micTranscriber = StreamTranscriber()
@@ -53,7 +56,9 @@ final class CallRecorder {
         let callTranscriber = self.callTranscriber
         let callWriter = self.callWriter
         let speakers = self.speakers
+        let othersMeter = self.othersMeter
         let capture = SystemAudioCapture { buffer in
+            othersMeter.feed(buffer)
             callTranscriber.feed(buffer)
             callWriter.write(buffer)
             speakers.append(buffer)
@@ -69,7 +74,9 @@ final class CallRecorder {
         // recording when AirPods connect, disconnect or switch mode mid-call.
         let micTranscriber = self.micTranscriber
         let micWriter = self.micWriter
+        let meMeter = self.meMeter
         try await microphone.start(deviceUID: MicrophoneChoice.systemDefault) { buffer in
+            meMeter.feed(buffer)
             micTranscriber.feed(buffer)
             micWriter.write(buffer)
         }
@@ -106,6 +113,43 @@ final class CallRecorder {
 
     private func publish() {
         onUpdate?(transcript, liveMe, liveOthers)
+    }
+}
+
+/// Whether someone is talking right now, judged from how loud the audio is.
+/// Fed on audio threads; read on the main thread a few times a second.
+final class SpeakingMeter: @unchecked Sendable {
+    let threshold: Double
+    private let lock = NSLock()
+    private var lastLoud: Date = .distantPast
+    private var latest: Double = 0
+
+    init(threshold: Double) { self.threshold = threshold }
+
+    func feed(_ buffer: AVAudioPCMBuffer) {
+        record(level: AudioReformatter.rms(of: buffer))
+    }
+
+    func record(level: Double, at time: Date = Date()) {
+        lock.lock()
+        defer { lock.unlock() }
+        latest = level
+        if level >= threshold { lastLoud = time }
+    }
+
+    /// The most recent sound level.
+    var level: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return latest
+    }
+
+    /// Talking now, or in the last `hold` seconds (so it doesn't flicker
+    /// between words).
+    func isSpeaking(hold: TimeInterval = 0.5, now: Date = Date()) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return now.timeIntervalSince(lastLoud) <= hold
     }
 }
 

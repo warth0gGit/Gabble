@@ -104,3 +104,59 @@ final class VoiceprintStoreTests: XCTestCase {
         XCTAssertTrue(VoiceprintStore(fileURL: url).voices.isEmpty)
     }
 }
+
+@MainActor
+final class LiveSpeakerTests: XCTestCase {
+    private func voice(_ id: String, _ start: Double, _ end: Double) -> VoiceSegment {
+        VoiceSegment(speakerID: id, start: start, end: end)
+    }
+
+    func testBeforeVoicesAreKnownShowsYouAndOthers() {
+        let list = CallController.liveSpeakers(meTalking: false, meLevel: 0, meThreshold: 0.02, othersTalking: true,
+                                               voices: [], asking: nil, name: { $0 })
+        XCTAssertEqual(list.map(\.name), ["You", "Others"])
+        XCTAssertEqual(list.map(\.isSpeaking), [false, true])
+    }
+
+    func testLatestVoiceLightsUpAndShortBlipsAreHidden() {
+        let voices = [voice("S1", 0, 5), voice("S2", 5, 8), voice("S3", 8, 8.5), voice("S1", 9, 12)]
+        let list = CallController.liveSpeakers(meTalking: false, meLevel: 0, meThreshold: 0.02, othersTalking: true,
+                                               voices: voices, asking: nil, name: { $0 == "S1" ? "Sarah" : "Speaker 2" })
+        XCTAssertEqual(list.map(\.name), ["You", "Sarah", "Speaker 2"])
+        XCTAssertEqual(list.map(\.isSpeaking), [false, true, false])
+    }
+
+    func testVoiceBeingAskedAboutIsNew() {
+        let voices = [voice("S1", 0, 1)]
+        let list = CallController.liveSpeakers(meTalking: false, meLevel: 0, meThreshold: 0.02, othersTalking: false,
+                                               voices: voices, asking: "S1", name: { $0 })
+        XCTAssertEqual(list.last?.name, "New voice")
+        XCTAssertEqual(list.last?.isNew, true)
+    }
+
+    func testYourMicHearingTheSpeakersDoesNotLightYouUp() {
+        let quiet = CallController.liveSpeakers(meTalking: true, meLevel: 0.03, meThreshold: 0.02, othersTalking: true,
+                                                voices: [], asking: nil, name: { $0 })
+        XCTAssertFalse(quiet[0].isSpeaking)
+        let loud = CallController.liveSpeakers(meTalking: true, meLevel: 0.2, meThreshold: 0.02, othersTalking: true,
+                                               voices: [], asking: nil, name: { $0 })
+        XCTAssertTrue(loud[0].isSpeaking)
+    }
+}
+
+@MainActor
+final class SpeakingMeterTests: XCTestCase {
+    func testHoldsBrieflyAfterSpeech() {
+        let meter = SpeakingMeter(threshold: 0.02)
+        let t = Date()
+        meter.record(level: 0.1, at: t)
+        meter.record(level: 0.001, at: t.addingTimeInterval(0.2))
+        XCTAssertTrue(meter.isSpeaking(now: t.addingTimeInterval(0.3)))
+        XCTAssertFalse(meter.isSpeaking(now: t.addingTimeInterval(1.0)))
+    }
+
+    func testElapsedTimeFormat() {
+        XCTAssertEqual(ElapsedTime.format(64), "1:04")
+        XCTAssertEqual(ElapsedTime.format(3725), "1:02:05")
+    }
+}

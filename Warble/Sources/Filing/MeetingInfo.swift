@@ -25,10 +25,14 @@ struct MeetingInfo: Equatable {
 /// Mac's Calendar app shows (iCloud, Google, Exchange/Outlook).
 @MainActor
 final class CalendarLookup {
+    /// Off for now: Jonny's work doesn't allow calendar access (2026-11-01).
+    /// Turning this on brings back meeting names and calendar-based filing.
+    static let isEnabled = false
+
     private let store = EKEventStore()
 
     var isAuthorized: Bool {
-        EKEventStore.authorizationStatus(for: .event) == .fullAccess
+        Self.isEnabled && EKEventStore.authorizationStatus(for: .event) == .fullAccess
     }
 
     /// The meeting happening at `date`, or nil if there isn't one (or no access).

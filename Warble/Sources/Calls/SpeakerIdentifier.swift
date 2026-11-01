@@ -99,7 +99,9 @@ enum SpeakerAssigner {
 /// spotted during the call. Known voices come back with their names as IDs.
 final class SpeakerIdentifier: @unchecked Sendable {
     static let sampleRate: Double = 16_000
-    private let chunkSeconds: Double = 15
+    /// Shorter chunks show who's talking sooner during the call; much shorter
+    /// than this and voices are told apart less reliably.
+    private let chunkSeconds: Double = 6
     /// Audio kept while the models download, at most ten minutes.
     private let maxPendingSeconds: Double = 600
 

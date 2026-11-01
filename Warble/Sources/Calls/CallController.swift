@@ -26,6 +26,39 @@ final class CallController: ObservableObject {
     @Published private(set) var filedNote: String?
     /// Folders to offer when asking where a call should go.
     @Published private(set) var filingSuggestions: [FilingSuggestion] = []
+
+    /// A person on the call, for the live speaker chips.
+    struct LiveSpeaker: Identifiable, Equatable {
+        var id: String
+        var name: String
+        var isYou = false
+        /// The voice Warble is asking about ("Who's this?").
+        var isNew = false
+        var isSpeaking = false
+    }
+    /// You, then everyone heard on the other side, with who's talking now.
+    @Published private(set) var liveSpeakers: [LiveSpeaker] = []
+    /// The live card shrunk to a small pill.
+    @Published var panelMinimized = false
+
+    /// The steps shown while a finished call is saved.
+    enum SavingStep: Int, Comparable {
+        case rereading, tidying, saving
+        static func < (a: SavingStep, b: SavingStep) -> Bool { a.rawValue < b.rawValue }
+    }
+    @Published private(set) var savingStep: SavingStep?
+    @Published private(set) var savingRereads = false
+    @Published private(set) var summaryWillFollow = false
+
+    /// What the "Transcript saved" card shows.
+    struct SavedStats: Equatable {
+        var minutes: Int
+        var speakers: Int
+        var words: Int
+        var summaryPending: Bool
+    }
+    @Published private(set) var savedStats: SavedStats?
+    private var meterTask: Task<Void, Never>?
     /// Remembers where calls go, so it can file them without asking.
     let filing = FilingStore()
     private let calendar = CalendarLookup()
@@ -84,8 +117,13 @@ final class CallController: ObservableObject {
             .store(in: &cancellables)
         $askingWho
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.updatePanel() }
+            .sink { [weak self] asking in
+                // A new voice always opens the full card, even if it was shrunk.
+                if asking != nil { self?.panelMinimized = false }
+                self?.updatePanel()
+            }
             .store(in: &cancellables)
+        CallNotifier.shared.activate()
     }
 
     // MARK: - Detector events
@@ -145,6 +183,9 @@ final class CallController: ObservableObject {
         namesThisCall = [:]
         skippedVoices = []
         askingWho = nil
+        panelMinimized = false
+        savedStats = nil
+        hideTask?.cancel()
         self.recorder = recorder
         transcript = recorder.transcript
         recordingStarted = Date()
@@ -156,6 +197,7 @@ final class CallController: ObservableObject {
         }
         do {
             try await recorder.start(hints: lexicon.recognitionHints, knownVoices: voices.voices)
+            startSpeakerMeter()
         } catch {
             lastError = Self.friendly(error)
             _ = await recorder.stop()
@@ -166,8 +208,71 @@ final class CallController: ObservableObject {
         }
     }
 
+    // MARK: - Who's talking now
+
+    private func startSpeakerMeter() {
+        meterTask?.cancel()
+        meterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.refreshLiveSpeakers()
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    private func stopSpeakerMeter() {
+        meterTask?.cancel()
+        meterTask = nil
+        liveSpeakers = []
+    }
+
+    private func refreshLiveSpeakers() {
+        guard let recorder, isRecording else { return }
+        let updated = Self.liveSpeakers(
+            meTalking: recorder.meMeter.isSpeaking(),
+            meLevel: recorder.meMeter.level, meThreshold: recorder.meMeter.threshold,
+            othersTalking: recorder.othersMeter.isSpeaking(),
+            voices: voiceSegments, asking: askingWho?.speakerID, name: { [self] in voiceName($0) })
+        if updated != liveSpeakers { liveSpeakers = updated }
+    }
+
+    /// The speaker chips. Pure, so it can be tested.
+    /// - Voices that have spoken less than two seconds aren't shown yet (they're
+    ///   often noise), unless Warble is asking about them.
+    /// - Without headphones the other side's voices reach your microphone too,
+    ///   so "You" only lights up over them when you're clearly louder.
+    /// - Which person on the other side is talking comes from voice recognition,
+    ///   which runs a few seconds behind; the most recently heard voice is shown.
+    static func liveSpeakers(meTalking: Bool, meLevel: Double, meThreshold: Double, othersTalking: Bool,
+                             voices: [VoiceSegment], asking: String?,
+                             name: (String) -> String) -> [LiveSpeaker] {
+        let youTalking = meTalking && !(othersTalking && meLevel < meThreshold * 3)
+        var list = [LiveSpeaker(id: "you", name: "You", isYou: true, isSpeaking: youTalking)]
+        let talk = SpeakerAssigner.talkTime(voices)
+        var order: [String] = []
+        for segment in voices where !order.contains(segment.speakerID) {
+            if (talk[segment.speakerID] ?? 0) >= 2 || segment.speakerID == asking { order.append(segment.speakerID) }
+        }
+        guard !order.isEmpty else {
+            list.append(LiveSpeaker(id: "others", name: "Others", isSpeaking: othersTalking))
+            return list
+        }
+        let latest = voices.filter { order.contains($0.speakerID) }.max { $0.end < $1.end }?.speakerID
+        for id in order {
+            list.append(LiveSpeaker(id: id, name: id == asking ? "New voice" : name(id),
+                                    isNew: id == asking, isSpeaking: othersTalking && id == latest))
+        }
+        return list
+    }
+
     private func stopAndSave() async {
         guard let recorder else { return }
+        stopSpeakerMeter()
+        panelMinimized = false
+        savingRereads = appState.recognitionModel == .parakeet
+        summaryWillFollow = SmartCleanup.isAvailable
+            && SummaryChunker.wordCount(recorder.transcript.plainText) >= SummaryChunker.minimumWords
+        savingStep = savingRereads ? .rereading : .tidying
         state = .saving
         var finished = await recorder.stop()
         self.recorder = nil
@@ -185,6 +290,7 @@ final class CallController: ObservableObject {
                 finished = better
             }
         }
+        if savingRereads { await showStep(.tidying) }
         finished.relabel { [self] segment in label(for: segment) }
         recordingStarted = nil
         liveMe = ""
@@ -200,9 +306,13 @@ final class CallController: ObservableObject {
         meeting = nil
         guard !finished.segments.isEmpty else {
             transcript = finished
+            savingStep = nil
+            lastError = "Warble didn't hear anything on that call, so there was nothing to save."
             state = .idle
+            showErrorBriefly()
             return
         }
+        await showStep(.saving)
         let features = CallFeatures(seriesID: finished.meeting?.seriesID, meetingTitle: finished.meeting?.title,
                                     people: finished.people, date: finished.started)
         let sure = filing.autoFolder(for: features)
@@ -214,6 +324,13 @@ final class CallController: ObservableObject {
             lexicon.harvest(from: finished.plainText)
             lastSaved = (url, finished, features)
             if finished.summary == .pending { summarise(finished, savedAt: url) }
+            await showStep(nil)
+            let stats = SavedStats(minutes: max(1, Int((finished.duration / 60).rounded())),
+                                   speakers: finished.speakers.count,
+                                   words: SummaryChunker.wordCount(finished.plainText),
+                                   summaryPending: finished.summary == .pending)
+            savedStats = stats
+            notifySaved(finished, stats: stats, url: url, filed: sure?.folder)
             if let sure {
                 filing.learn(features, folder: sure.folder)
                 filedNote = "Filed in \(sure.folder) (\(sure.reason))."
@@ -226,10 +343,28 @@ final class CallController: ObservableObject {
                 state = .filing(url)
             }
         } catch {
+            savingStep = nil
             lastError = "Couldn't save the transcript: \(error.localizedDescription)"
             state = .idle
             showErrorBriefly()
         }
+    }
+
+    /// Moves the end-of-call checklist on, pausing briefly so each step can be
+    /// seen ticking off (the work itself is usually instant).
+    private func showStep(_ step: SavingStep?) async {
+        try? await Task.sleep(for: .milliseconds(450))
+        savingStep = step
+    }
+
+    private func notifySaved(_ call: CallTranscript, stats: SavedStats, url: URL, filed folder: String?) {
+        let name = call.meeting?.title ?? "\(call.shortAppName) call"
+        let people = stats.speakers == 1 ? "1 speaker" : "\(stats.speakers) speakers"
+        let place = folder.map { "Filed in \($0)." } ?? "Saved in Unfiled. Choose a folder in the Warble card."
+        CallNotifier.shared.transcriptSaved(
+            title: "Call transcript saved",
+            body: "\(name): \(stats.minutes) min, \(people). \(place)",
+            url: url)
     }
 
     /// Swaps the live transcript for Parakeet's re-read of the recordings.
@@ -308,6 +443,11 @@ final class CallController: ObservableObject {
         guard segment.speaker == CallRecorder.othersLabel,
               let id = SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: segment), in: voiceSegments)
         else { return segment.speaker }
+        return voiceName(id)
+    }
+
+    /// A voice's name: given this call, remembered from earlier calls, or "Speaker 2".
+    private func voiceName(_ id: String) -> String {
         if let name = namesThisCall[id] { return name }
         if voices.voices.contains(where: { $0.name == id }) { return id }
         let unknown = voiceSegments.map(\.speakerID).reduce(into: [String]()) {
@@ -460,15 +600,15 @@ final class CallController: ObservableObject {
 
     // MARK: - Pop-up
 
-    /// The pop-up shows only when there's something to answer or see:
-    /// "Transcribe this call?", "Identify Speaker", a saved transcript, or a problem.
-    /// While a call is being transcribed the menu bar icon shows it instead.
+    /// The card in the top-right corner: "Transcribe this call?", the live card
+    /// while a call is transcribed (with "Who's this?"), the end-of-call steps,
+    /// the saved transcript, or a problem.
     private var needsPanel: Bool {
         if lastError != nil && state == .idle { return true }
         if askingWho != nil { return true }
         switch state {
-        case .asking, .saved, .filing: return true
-        default: return false
+        case .asking, .recording, .saving, .saved, .filing: return true
+        case .idle: return false
         }
     }
 
@@ -491,15 +631,11 @@ final class CallController: ObservableObject {
         }
     }
 
+    /// Shows a problem in the card. It stays until you click OK, so it can't
+    /// be missed.
     private func showErrorBriefly() {
-        panel?.show()
         hideTask?.cancel()
-        hideTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(10))
-            guard let self, !Task.isCancelled else { return }
-            self.lastError = nil
-            self.updatePanel()
-        }
+        updatePanel()
     }
 
     func dismissError() {
