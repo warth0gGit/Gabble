@@ -51,7 +51,7 @@ final class SpeechEngine {
         finalText = ""
         volatileText = ""
 
-        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) else {
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: SpeechAccent.saved().locale) else {
             throw SpeechEngineError.languageNotSupported
         }
 

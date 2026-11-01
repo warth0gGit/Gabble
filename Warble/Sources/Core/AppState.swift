@@ -25,6 +25,41 @@ enum RecognitionModel: String, CaseIterable, Identifiable {
     }
 }
 
+/// Which English Apple's speech engine listens for. Your Mac's language decides
+/// the default, but you can speak with a different accent from the one your Mac
+/// is set to (e.g. a British voice on a Mac set to English (US)).
+enum SpeechAccent: String, CaseIterable, Identifiable {
+    case matchMac
+    case british
+    case american
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .matchMac: return "Same as my Mac"
+        case .british: return "British English"
+        case .american: return "American English"
+        }
+    }
+
+    /// The locale handed to Apple's speech engine.
+    var locale: Locale {
+        switch self {
+        case .matchMac: return .current
+        case .british: return Locale(identifier: "en_GB")
+        case .american: return Locale(identifier: "en_US")
+        }
+    }
+
+    static let defaultsKey = "speechAccent"
+
+    /// The saved choice. Readable from any thread, so the speech engines can use it.
+    static func saved(in defaults: UserDefaults = .standard) -> SpeechAccent {
+        SpeechAccent(rawValue: defaults.string(forKey: defaultsKey) ?? "") ?? .matchMac
+    }
+}
+
 /// App-wide settings, saved automatically between launches.
 @MainActor
 final class AppState: ObservableObject {
@@ -35,6 +70,9 @@ final class AppState: ObservableObject {
     }
     @Published var recognitionModel: RecognitionModel {
         didSet { defaults.set(recognitionModel.rawValue, forKey: Keys.recognitionModel) }
+    }
+    @Published var speechAccent: SpeechAccent {
+        didSet { defaults.set(speechAccent.rawValue, forKey: SpeechAccent.defaultsKey) }
     }
     @Published var dictationKey: DictationKey {
         didSet { defaults.set(dictationKey.rawValue, forKey: Keys.dictationKey) }
@@ -69,6 +107,7 @@ final class AppState: ObservableObject {
         dictationEnabled = defaults.object(forKey: Keys.dictationEnabled) as? Bool ?? true
         recognitionModel = RecognitionModel(rawValue: defaults.string(forKey: Keys.recognitionModel) ?? "")
             ?? .appleOnDevice
+        speechAccent = SpeechAccent.saved(in: defaults)
         dictationKey = DictationKey(rawValue: defaults.string(forKey: Keys.dictationKey) ?? "") ?? .fn
         liveTyping = defaults.object(forKey: Keys.liveTyping) as? Bool ?? true
         cleanupEnabled = defaults.object(forKey: Keys.cleanupEnabled) as? Bool ?? true

@@ -121,7 +121,8 @@ actor ParakeetService {
                 let heard = (aliases[term] ?? []).filter { $0.caseInsensitiveCompare(term) != .orderedSame }
                 return CustomVocabularyTerm(text: term, aliases: heard.isEmpty ? nil : heard)
             })
-            let session = try await VocabularyBoostingSession(vocabulary: vocabulary, ctcModels: models)
+            let session = try await VocabularyBoostingSession(vocabulary: vocabulary, ctcModels: models,
+                                                              config: Self.boostingConfig)
             boosting = (terms, aliases, session)
             return session
         } catch {
@@ -130,6 +131,18 @@ actor ParakeetService {
             return nil
         }
     }
+
+    /// Word List boosting settings. The library's default "acoustic rescue"
+    /// pass swaps in a Word List term wherever the audio vaguely resembles it,
+    /// even when the spelling is nothing alike. With a short Word List that turns
+    /// ordinary words into a name ("see whether" became "Shadee"); the library
+    /// notes this (#702) and recommends switching the pass off for short lists.
+    /// A term is still swapped in when the word heard is spelt like it or like
+    /// one of its "mishears it as" entries, and the audio agrees.
+    static let boostingConfig = VocabularyRescorer.Config(
+        shortTermCbwTaperPivot: 5,
+        spotterRescueEnabled: false
+    )
 
     /// Runs one transcription at a time so the model's state isn't shared.
     private func serialized<T>(_ work: @escaping () async throws -> T) async throws -> T {

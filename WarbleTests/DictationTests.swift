@@ -50,6 +50,14 @@ final class TextCleanerTests: XCTestCase {
         XCTAssertNotNil(TextCleaner.restartPoint(in: "We meet on Monday.", for: "we meet on Tuesday"))
     }
 
+    func testRemovesRepeatedPhrasesAndCutOffStarts() {
+        // From Jonny's dictations into Claude, 1 Nov 2026.
+        XCTAssertEqual(TextCleaner.clean("I don't know if it if it works"), "I don't know if it works")
+        XCTAssertEqual(TextCleaner.clean("we're gonna t test this"), "We're gonna test this")
+        XCTAssertEqual(TextCleaner.clean("a apple and I in"), "A apple and I in")
+        XCTAssertEqual(TextCleaner.clean("don't take it"), "Don't take it")
+    }
+
     func testRemovesLikeBetweenRepeatedWords() {
         XCTAssertEqual(TextCleaner.clean("the like the like the tidy up works"), "The tidy up works")
     }
