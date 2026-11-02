@@ -126,7 +126,7 @@ enum TextInserter {
     /// Where the focused text box and its cursor are, in Accessibility
     /// coordinates (top-left origin). Either may be nil.
     static func focusedFieldGeometry() -> (field: CGRect?, caret: CGRect?) {
-        guard let element = focusedElement() else { return (nil, nil) }
+        guard let element = focusedElement(), isTextInput(element) else { return (nil, nil) }
         var field: CGRect?
         var position: CFTypeRef?
         var size: CFTypeRef?
@@ -152,6 +152,22 @@ enum TextInserter {
             }
         }
         return (field, caret)
+    }
+
+    /// Whether the focused thing is somewhere you can type: a text field or
+    /// text area, or anything with an editable text cursor. Not a window,
+    /// list or web page with nothing selected.
+    private static func isTextInput(_ element: AXUIElement) -> Bool {
+        var role: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
+           let role = role as? String,
+           [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXSearchField"].contains(role) {
+            return true
+        }
+        var settable: DarwinBoolean = false
+        return selectedRange(of: element) != nil
+            && AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success
+            && settable.boolValue
     }
 
     private static func selectedRange(of element: AXUIElement) -> CFRange? {
