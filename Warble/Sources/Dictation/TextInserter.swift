@@ -298,6 +298,16 @@ enum TextInserter {
             .replacingOccurrences(of: "\u{00A0}", with: " ")
     }
 
+    /// Presses Return, to send the message, a moment after the text goes in.
+    static func pressReturn(after delay: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            let key = CGKeyCode(kVK_Return)
+            CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)?.post(tap: .cghidEventTap)
+            CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)?.post(tap: .cghidEventTap)
+        }
+    }
+
     private static func sendPaste() {
         let source = CGEventSource(stateID: .combinedSessionState)
         let key = CGKeyCode(kVK_ANSI_V)
