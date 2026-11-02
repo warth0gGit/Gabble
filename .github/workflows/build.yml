@@ -5,6 +5,13 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Machine to build on (macos-15 is a fallback when macos-26 machines are scarce)"
+        default: macos-26
+      skip_tests:
+        description: "Skip the tests (needed on macos-15: the app only runs on macOS 26)"
+        default: "false"
 
 permissions:
   contents: write
@@ -15,9 +22,17 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Use Xcode 26 on older machines
+        if: ${{ inputs.runner && inputs.runner != 'macos-26' }}
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No Xcode 26 on this machine"; exit 1; fi
+          sudo xcode-select -s "$XCODE"
 
       - name: Show toolchain
         run: |
@@ -30,6 +45,7 @@ jobs:
           xcodegen generate
 
       - name: Run tests
+        if: ${{ inputs.skip_tests != 'true' }}
         run: |
           set -o pipefail
           xcodebuild test \
