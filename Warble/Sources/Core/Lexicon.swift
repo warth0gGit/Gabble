@@ -169,7 +169,15 @@ final class LexiconStore: ObservableObject {
     var suggested: [LexiconEntry] { entries.filter { $0.state == .suggested } }
 
     /// Words passed to the speech engine to bias recognition toward the user's jargon.
-    var recognitionHints: [String] { confirmed.map(\.term) }
+    var recognitionHints: [String] {
+        let terms = confirmed.map(\.term)
+        return terms.contains { $0.caseInsensitiveCompare("Warble") == .orderedSame } ? terms : ["Warble"] + terms
+    }
+
+    /// Warble always knows its own name, and the ways speech engines mishear it.
+    static let builtInReplacements: [TextCleaner.Replacement] = [
+        "warball", "war ball", "warbel", "warbal", "willball", "warbler app",
+    ].map { TextCleaner.Replacement(heard: $0, written: $0 == "warbler app" ? "Warble app" : "Warble") }
 
     func add(term: String, soundsLike: [String] = [], meaning: String = "",
              source: LexiconEntry.Source = .manual, state: LexiconEntry.State = .confirmed) {
@@ -224,7 +232,7 @@ final class LexiconStore: ObservableObject {
     var replacements: [TextCleaner.Replacement] {
         confirmed.flatMap { entry in
             entry.soundsLike.map { TextCleaner.Replacement(heard: $0, written: entry.term) }
-        }
+        } + Self.builtInReplacements
     }
 
     /// Checks whether a word is in the Mac's dictionary. Replaceable in tests.

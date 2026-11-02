@@ -81,7 +81,7 @@ final class LexiconStoreTests: XCTestCase {
     func testReplacementsComeFromSoundsLike() {
         let store = makeStore()
         store.add(term: "SaaS", soundsLike: ["sass"])
-        XCTAssertEqual(store.replacements, [TextCleaner.Replacement(heard: "sass", written: "SaaS")])
+        XCTAssertEqual(store.replacements, [TextCleaner.Replacement(heard: "sass", written: "SaaS")] + LexiconStore.builtInReplacements)
     }
 
     @MainActor
@@ -99,5 +99,14 @@ final class LexiconStoreTests: XCTestCase {
         LexiconStore(fileURL: url).add(term: "OKR", meaning: "objectives and key results")
         let reloaded = LexiconStore(fileURL: url)
         XCTAssertEqual(reloaded.confirmed.map(\.term), ["OKR"])
+    }
+}
+
+final class WarbleNameTests: XCTestCase {
+    func testWarbleIsAlwaysSpelledRight() {
+        XCTAssertEqual(TextCleaner.clean("open the warball app", replacements: LexiconStore.builtInReplacements),
+                       "Open the Warble app")
+        XCTAssertEqual(TextCleaner.clean("it's in the Warbler app", replacements: LexiconStore.builtInReplacements),
+                       "It's in the Warble app")
     }
 }

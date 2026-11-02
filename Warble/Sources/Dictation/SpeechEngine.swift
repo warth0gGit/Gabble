@@ -51,70 +51,88 @@ final class SpeechEngine {
         finalText = ""
         volatileText = ""
 
-        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: SpeechAccent.saved().locale) else {
-            throw SpeechEngineError.languageNotSupported
-        }
-
-        let transcriber = SpeechTranscriber(
-            locale: locale,
-            transcriptionOptions: [],
-            reportingOptions: [.volatileResults, .fastResults],
-            attributeOptions: []
-        )
-
-        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-            onPreparing?("Downloading Apple's speech model (first time only)…")
-            try await request.downloadAndInstall()
-        }
-
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-        guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
-            throw SpeechEngineError.noAudioFormat
-        }
-
-        if !hints.isEmpty {
-            let context = AnalysisContext()
-            context.contextualStrings[.general] = Array(hints.prefix(200))
-            try? await analyzer.setContext(context)
-        }
-
+        // Start the microphone first and keep what it hears, so words spoken
+        // while Apple's speech model gets ready aren't lost.
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-        inputContinuation = continuation
-        self.analyzer = analyzer
-
-        resultsTask = Task { [weak self] in
-            do {
-                for try await result in transcriber.results {
-                    let text = String(result.text.characters)
-                    guard let self, self.run == mine else { return }
-                    if result.isFinal {
-                        self.finalText = Self.join(self.finalText, text)
-                        self.volatileText = ""
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.isEmpty { self.onFinalSegment?(trimmed) }
-                    } else {
-                        self.volatileText = text
-                        self.onVolatileSegment?(text)
-                    }
-                    self.onPartial?(Self.join(self.finalText, self.volatileText))
-                }
-            } catch {
-                // The stream ends with an error if the analyzer is cancelled; nothing to do.
-            }
+        let preRoll = PreRoll()
+        let levelHandler: @Sendable (Double) -> Void = { [weak self] level in
+            Task { @MainActor in self?.onLevel?(level) }
         }
+        do {
+            try await microphone.start(deviceUID: MicrophoneChoice.saved()) { buffer in
+                levelHandler(AudioReformatter.rms(of: buffer))
+                preRoll.receive(buffer)
+            }
+        } catch {
+            continuation.finish()
+            throw error
+        }
+        inputContinuation = continuation
 
         do {
+            guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: SpeechAccent.saved().locale) else {
+                throw SpeechEngineError.languageNotSupported
+            }
+
+            let transcriber = SpeechTranscriber(
+                locale: locale,
+                transcriptionOptions: [],
+                reportingOptions: [.volatileResults, .fastResults],
+                attributeOptions: []
+            )
+
+            if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                onPreparing?("Downloading Apple's speech model (first time only)…")
+                try await request.downloadAndInstall()
+            }
+
+            let analyzer = SpeechAnalyzer(modules: [transcriber])
+            guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+                throw SpeechEngineError.noAudioFormat
+            }
+
+            if !hints.isEmpty {
+                let context = AnalysisContext()
+                context.contextualStrings[.general] = Array(hints.prefix(200))
+                try? await analyzer.setContext(context)
+            }
+            self.analyzer = analyzer
+
+            resultsTask = Task { [weak self] in
+                do {
+                    for try await result in transcriber.results {
+                        let text = String(result.text.characters)
+                        guard let self, self.run == mine else { return }
+                        if result.isFinal {
+                            self.finalText = Self.join(self.finalText, text)
+                            self.volatileText = ""
+                            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmed.isEmpty { self.onFinalSegment?(trimmed) }
+                        } else {
+                            self.volatileText = text
+                            self.onVolatileSegment?(text)
+                        }
+                        self.onPartial?(Self.join(self.finalText, self.volatileText))
+                    }
+                } catch {
+                    // The stream ends with an error if the analyzer is cancelled; nothing to do.
+                }
+            }
+
+            // Hand over what was heard so far, then stream live.
+            preRoll.attach(AudioReformatter(target: analyzerFormat)) { output in
+                continuation.yield(AnalyzerInput(buffer: output))
+            }
             try await analyzer.start(inputSequence: stream)
-            try await startMicrophone(converting: analyzerFormat, into: continuation)
         } catch {
             // Don't leave a half-started analyzer or microphone running.
             microphone.stop()
             continuation.finish()
             inputContinuation = nil
-            await analyzer.cancelAndFinishNow()
+            await analyzer?.cancelAndFinishNow()
             resultsTask?.cancel()
             resultsTask = nil
-            self.analyzer = nil
+            analyzer = nil
             throw error
         }
         isRunning = true
@@ -160,20 +178,6 @@ final class SpeechEngine {
         analyzer = nil
     }
 
-    private func startMicrophone(converting target: AVAudioFormat,
-                                 into continuation: AsyncStream<AnalyzerInput>.Continuation) async throws {
-        let reformatter = AudioReformatter(target: target)
-        let levelHandler: @Sendable (Double) -> Void = { [weak self] level in
-            Task { @MainActor in self?.onLevel?(level) }
-        }
-        try await microphone.start(deviceUID: MicrophoneChoice.saved()) { buffer in
-            levelHandler(AudioReformatter.rms(of: buffer))
-            if let output = reformatter.convert(buffer) {
-                continuation.yield(AnalyzerInput(buffer: output))
-            }
-        }
-    }
-
     nonisolated private static func join(_ a: String, _ b: String) -> String {
         let left = a.trimmingCharacters(in: .whitespaces)
         let right = b.trimmingCharacters(in: .whitespaces)
@@ -198,3 +202,61 @@ protocol DictationSpeechEngine: AnyObject {
 }
 
 extension SpeechEngine: DictationSpeechEngine {}
+
+/// Holds the microphone's first buffers until the speech model is ready, then
+/// passes them on in order, followed by live audio. Thread-safe: buffers arrive
+/// on an audio thread. Keeps at most about 30 seconds.
+final class PreRoll: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [AVAudioPCMBuffer] = []
+    private var pendingFrames: AVAudioFramePosition = 0
+    private var reformatter: AudioReformatter?
+    private var send: ((AVAudioPCMBuffer) -> Void)?
+
+    func receive(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let reformatter, let send {
+            if let output = reformatter.convert(buffer) { send(output) }
+            return
+        }
+        // The audio engine may reuse its buffer, so keep a copy.
+        guard let copy = Self.copy(buffer) else { return }
+        pending.append(copy)
+        pendingFrames += AVAudioFramePosition(copy.frameLength)
+        let limit = AVAudioFramePosition(copy.format.sampleRate * 30)
+        while pendingFrames > limit, !pending.isEmpty {
+            pendingFrames -= AVAudioFramePosition(pending.removeFirst().frameLength)
+        }
+    }
+
+    func attach(_ reformatter: AudioReformatter, send: @escaping (AVAudioPCMBuffer) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        for buffer in pending {
+            if let output = reformatter.convert(buffer) { send(output) }
+        }
+        pending.removeAll()
+        pendingFrames = 0
+        self.reformatter = reformatter
+        self.send = send
+    }
+
+    var bufferedFrames: AVAudioFramePosition {
+        lock.lock()
+        defer { lock.unlock() }
+        return pendingFrames
+    }
+
+    static func copy(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else { return nil }
+        copy.frameLength = buffer.frameLength
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let target = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        for (from, to) in zip(source, target) {
+            guard let src = from.mData, let dst = to.mData else { continue }
+            memcpy(dst, src, Int(min(from.mDataByteSize, to.mDataByteSize)))
+        }
+        return copy
+    }
+}
