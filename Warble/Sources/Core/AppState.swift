@@ -84,6 +84,9 @@ final class AppState: ObservableObject {
     @Published var liveTyping: Bool {
         didSet { defaults.set(liveTyping, forKey: Keys.liveTyping) }
     }
+    @Published var matrixEffect: Bool {
+        didSet { defaults.set(matrixEffect, forKey: Keys.matrixEffect) }
+    }
     @Published var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Keys.cleanupEnabled) }
     }
@@ -116,6 +119,7 @@ final class AppState: ObservableObject {
         dictationKey = DictationKey(rawValue: defaults.string(forKey: Keys.dictationKey) ?? "") ?? .fn
         liveTyping = defaults.object(forKey: Keys.liveTyping) as? Bool ?? true
         cleanupEnabled = defaults.object(forKey: Keys.cleanupEnabled) as? Bool ?? true
+        matrixEffect = defaults.object(forKey: Keys.matrixEffect) as? Bool ?? false
         promptForCalls = defaults.object(forKey: Keys.promptForCalls) as? Bool ?? true
         callApps = defaults.stringArray(forKey: Keys.callApps) ?? Self.defaultCallApps
         masterFolderPath = defaults.string(forKey: Keys.masterFolderPath) ?? Self.defaultMasterFolder
@@ -142,6 +146,7 @@ final class AppState: ObservableObject {
         static let recognitionModel = "recognitionModel"
         static let cleanupEnabled = "cleanupEnabled"
         static let liveTyping = "liveTyping"
+        static let matrixEffect = "matrixEffect"
         static let dictationKey = "dictationKey"
         static let promptForCalls = "promptForCalls"
         static let callApps = "callApps"

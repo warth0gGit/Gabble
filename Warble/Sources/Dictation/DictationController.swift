@@ -42,6 +42,9 @@ final class DictationController: ObservableObject {
     private let hotkey = HotkeyMonitor()
     private let correctionWatcher = CorrectionWatcher()
     private var hud: DictationHUD?
+    private var matrix: MatrixOverlay?
+    /// Where the Matrix effect goes for this dictation (Cocoa coordinates), if it's on.
+    private var matrixArea: CGRect?
     private var pressedAt: Date?
     /// When the key went down, by the key event's own clock.
     private var pressedEventTime: TimeInterval?
@@ -212,6 +215,7 @@ final class DictationController: ObservableObject {
         TextInserter.enableAccessibilityForFrontmostApp()
         typer = LivePhraseTyper()
         isLiveTyping = appState.liveTyping && testSink == nil && TextInserter.focusedFieldSupportsLiveEditing()
+        matrixArea = appState.matrixEffect ? Self.focusedTextArea() : nil
         phase = .preparing("Starting…")
         usingParakeet = appState.recognitionModel == .parakeet
         if appState.cleanupEnabled && SmartCleanup.isAvailable {
@@ -412,6 +416,27 @@ final class DictationController: ObservableObject {
             if hud == nil { hud = DictationHUD(controller: self) }
             hud?.show()
         }
+        updateMatrix(for: phase)
+    }
+
+    /// The Matrix effect runs while you talk and while the text is tidied,
+    /// and goes away just as the text goes in.
+    private func updateMatrix(for phase: Phase) {
+        switch phase {
+        case .listening, .processing:
+            guard let area = matrixArea else { return }
+            if matrix == nil { matrix = MatrixOverlay() }
+            matrix?.show(over: area)
+        case .idle, .preparing:
+            matrix?.hide()
+        }
+    }
+
+    private static func focusedTextArea() -> CGRect? {
+        let geometry = TextInserter.focusedFieldGeometry()
+        guard let area = MatrixOverlay.area(field: geometry.field, caret: geometry.caret),
+              let primary = NSScreen.screens.first else { return nil }
+        return MatrixOverlay.cocoaRect(fromAccessibility: area, primaryScreenHeight: primary.frame.height)
     }
 }
 

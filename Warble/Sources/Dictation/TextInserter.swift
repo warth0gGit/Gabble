@@ -114,6 +114,37 @@ enum TextInserter {
         return (focused as! AXUIElement)
     }
 
+    /// Where the focused text box and its cursor are, in Accessibility
+    /// coordinates (top-left origin). Either may be nil.
+    static func focusedFieldGeometry() -> (field: CGRect?, caret: CGRect?) {
+        guard let element = focusedElement() else { return (nil, nil) }
+        var field: CGRect?
+        var position: CFTypeRef?
+        var size: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &position) == .success,
+           AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &size) == .success,
+           let position, let size,
+           CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() {
+            var point = CGPoint.zero
+            var extent = CGSize.zero
+            if AXValueGetValue(position as! AXValue, .cgPoint, &point),
+               AXValueGetValue(size as! AXValue, .cgSize, &extent) {
+                field = CGRect(origin: point, size: extent)
+            }
+        }
+        var caret: CGRect?
+        if var range = selectedRange(of: element), let rangeValue = AXValueCreate(.cfRange, &range) {
+            var bounds: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString,
+                                                          rangeValue, &bounds) == .success,
+               let bounds, CFGetTypeID(bounds) == AXValueGetTypeID() {
+                var rect = CGRect.zero
+                if AXValueGetValue(bounds as! AXValue, .cgRect, &rect) { caret = rect }
+            }
+        }
+        return (field, caret)
+    }
+
     private static func selectedRange(of element: AXUIElement) -> CFRange? {
         var rangeValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,

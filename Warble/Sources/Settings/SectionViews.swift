@@ -68,6 +68,10 @@ struct DictationView: View {
                      : "Your words appear all at once, already tidied, when you finish.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                Toggle("Matrix effect while dictating", isOn: $appState.matrixEffect)
+                Text("Green characters stream over the text box while you talk, until your tidied text goes in. If Warble can't tell where the text box is, you just see the listening capsule.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 if appState.dictationKey == .fn, let action = FnKeySetting.current, action != .doNothing {
                     Label("Your Mac also uses the Fn key to \(action.description). That can pop up over your text and swallow what Warble types. In System Settings → Keyboard, set \"Press 🌐 key to\" to \"Do Nothing\".",
                           systemImage: "exclamationmark.triangle.fill")
