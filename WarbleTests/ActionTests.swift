@@ -123,7 +123,7 @@ final class ClaudeSummariserTests: XCTestCase {
         let prompt = ClaudeSummariser.prompt(for: t, terms: ["Shadee"])
         XCTAssertTrue(prompt.contains("Other speakers: Sarah Jones."))
         XCTAssertTrue(prompt.contains("spelled correctly: Shadee."))
-        XCTAssertTrue(prompt.contains("capture EVERY task"))
+        XCTAssertTrue(prompt.contains("real follow-ups"))
         XCTAssertTrue(prompt.hasSuffix("Me (00:03): I have to get sign-off by Wednesday.\nSarah Jones (00:09): Great."))
     }
 

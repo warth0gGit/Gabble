@@ -215,3 +215,23 @@ final class CallDetectorTests: XCTestCase {
         XCTAssertEqual(events(), ["start Microsoft Teams", "end Microsoft Teams", "start Zoom"])
     }
 }
+
+@MainActor
+final class ChipNameTests: XCTestCase {
+    func testFirstNamesWithInitialsOnlyWhenNeeded() {
+        let names = CallController.chipNames(["Shadee Young", "Jonathan Young", "Jonathan Smith", "Speaker 2", "Jala"])
+        XCTAssertEqual(names["Shadee Young"], "Shadee")
+        XCTAssertEqual(names["Jonathan Young"], "Jonathan Y")
+        XCTAssertEqual(names["Jonathan Smith"], "Jonathan S")
+        XCTAssertEqual(names["Speaker 2"], "Speaker 2")
+        XCTAssertEqual(names["Jala"], "Jala")
+    }
+
+    func testABigCallShowsTheMostRecentFourAndACount() {
+        let voices = (1...7).map { VoiceSegment(speakerID: "S\($0)", start: Double($0 * 10), end: Double($0 * 10 + 5)) }
+        let list = CallController.liveSpeakers(meTalking: false, meLevel: 0, meThreshold: 0.02, othersTalking: true,
+                                               voices: voices, asking: nil, name: { "Person \($0)" })
+        XCTAssertEqual(list.map(\.id), ["you", "S4", "S5", "S6", "S7", "more"])
+        XCTAssertEqual(list.last?.name, "+3")
+    }
+}

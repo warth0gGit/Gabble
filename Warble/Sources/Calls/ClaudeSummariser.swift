@@ -135,8 +135,10 @@ enum ClaudeSummariser {
         Rules:
         - Accuracy matters more than speed or brevity. Use only what is in the transcript. Never invent names, \
         dates, numbers, decisions or tasks.
-        - actionItems: capture EVERY task, commitment, promise or request, including casual ones ("I think I have \
-        to go and get…") and ones split across lines. owner is "Me", a speaker's name exactly as written, a person \
+        - actionItems: the real follow-ups someone has to do after the call: commitments, promises and requests, \
+        including casual ones ("I think I have to go and get…") and ones split across lines. Combine steps of the \
+        same piece of work into one item, and leave out trivial or in-the-moment things (checking a setting during \
+        the call, "let me share my screen"). Usually 3 to 8 items for a typical call. owner is "Me", a speaker's name exactly as written, a person \
         named in the transcript, or "" if unclear. task starts with a verb and is specific. due is the date as \
         YYYY-MM-DD when a specific day can be worked out from the call date, otherwise the words used, or "".
         - summary: short, skimmable bullet points, one idea each, without bullet symbols.

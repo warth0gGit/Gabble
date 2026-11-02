@@ -294,11 +294,49 @@ final class CallController: ObservableObject {
             return list
         }
         let latest = voices.filter { order.contains($0.speakerID) }.max { $0.end < $1.end }?.speakerID
-        for id in order {
-            list.append(LiveSpeaker(id: id, name: id == asking ? "New voice" : name(id),
+        // On a big call show only the people heard most recently (and the voice
+        // being asked about), in the order they joined, plus "+N" for the rest.
+        var shown = order
+        if order.count > maxChips {
+            let lastHeard = voices.reduce(into: [String: TimeInterval]()) { $0[$1.speakerID] = max($0[$1.speakerID] ?? 0, $1.end) }
+            var keep = Set(order.sorted { (lastHeard[$0] ?? 0) > (lastHeard[$1] ?? 0) }.prefix(maxChips))
+            if let asking, order.contains(asking), !keep.contains(asking) {
+                if let drop = order.filter({ keep.contains($0) }).min(by: { (lastHeard[$0] ?? 0) < (lastHeard[$1] ?? 0) }) {
+                    keep.remove(drop)
+                }
+                keep.insert(asking)
+            }
+            shown = order.filter { keep.contains($0) }
+        }
+        let short = chipNames(order.map(name))
+        for id in shown {
+            list.append(LiveSpeaker(id: id, name: id == asking ? "New voice" : short[name(id)] ?? name(id),
                                     isNew: id == asking, isSpeaking: othersTalking && id == latest))
         }
+        if order.count > shown.count {
+            list.append(LiveSpeaker(id: "more", name: "+\(order.count - shown.count)"))
+        }
         return list
+    }
+
+    /// Most chips for people on the other side; more are summed up as "+N".
+    static let maxChips = 4
+
+    /// First names for the chips ("Jala"), with a surname initial when two
+    /// people share a first name ("Jonathan Y", "Jonathan S"). Labels like
+    /// "Speaker 2" stay as they are. Pure, unit tested.
+    static func chipNames(_ names: [String]) -> [String: String] {
+        func parts(_ name: String) -> [String] { name.split(separator: " ").map(String.init) }
+        func isLabel(_ name: String) -> Bool { parts(name).count < 2 || parts(name).last.map { Int($0) != nil } == true }
+        var firstCounts: [String: Int] = [:]
+        for name in Set(names) where !isLabel(name) { firstCounts[parts(name)[0].lowercased(), default: 0] += 1 }
+        var result: [String: String] = [:]
+        for name in names {
+            guard !isLabel(name) else { result[name] = name; continue }
+            let p = parts(name)
+            result[name] = (firstCounts[p[0].lowercased()] ?? 0) > 1 ? "\(p[0]) \(p.last!.prefix(1))" : p[0]
+        }
+        return result
     }
 
     private func stopAndSave() async {
