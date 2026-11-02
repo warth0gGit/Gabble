@@ -38,7 +38,7 @@ final class TextCleanerTests: XCTestCase {
     func testScratchedThatAfterNoWait() {
         // Jonny's real dictation into the Claude app, 1 Nov 2026.
         XCTAssertEqual(TextCleaner.clean("Do I need to wait for eighteen or no wait, sorry scratched that do I test seventeen or should I wait for eighteen?"),
-                       "Do I test seventeen or should I wait for eighteen?")
+                       "Do I test 17 or should I wait for 18?")
     }
 
     func testScratchThatWithoutRestatingDropsTheSentence() {
@@ -328,5 +328,26 @@ final class WebAppDetectionTests: XCTestCase {
     func testBrowsersAreWebBased() {
         XCTAssertTrue(TextInserter.webBrowserBundleIDs.contains("com.google.Chrome"))
         XCTAssertTrue(TextInserter.webBrowserBundleIDs.contains("com.apple.Safari"))
+    }
+
+}
+
+final class SpokenNumberTests: XCTestCase {
+    func testNumbersBecomeDigits() {
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("the latest build twenty seven"), "the latest build 27")
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("Twenty-five people and eighteen chairs"), "25 people and 18 chairs")
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("thirty minutes"), "30 minutes")
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("build eight is out, see page three"), "build 8 is out, see page 3")
+    }
+
+    func testEverydayWordsAreLeftAlone() {
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("one of them said no one came"), "one of them said no one came")
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("I need to fifteenth"), "I need to fifteenth")
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("someone twentysomething"), "someone twentysomething")
+        XCTAssertEqual(TextCleaner.spokenNumbersAsDigits("the twenty first of May"), "the twenty first of May")
+    }
+
+    func testCleanUsesDigits() {
+        XCTAssertEqual(TextCleaner.clean("I'm testing the latest build twenty seven"), "I'm testing the latest build 27")
     }
 }

@@ -99,8 +99,9 @@ enum SmartCleanup {
     - Fix punctuation, capitalization and grammar slips. Break long run-on speech into sentences, and \
     into paragraphs when the topic changes. Use American English spelling \
     (color, organize, center), even if the speaker sounds British.
-    - Write numbers, times, dates and amounts as digits where that is normal in writing \
-    ("three pm" becomes "3pm", "twenty five percent" becomes "25%").
+    - Write numbers, times, dates and amounts as digits ("three pm" becomes "3pm", "twenty five \
+    percent" becomes "25%", "build twenty seven" becomes "build 27"). Always use digits for numbers \
+    above ten and for build, version, page and step numbers.
     - When the speaker lists several items or steps, put them on separate lines as a numbered or \
     bulleted list.
     - Keep the speaker's meaning, tone and level of detail. Do not add information, summarize, or \
@@ -109,6 +110,10 @@ enum SmartCleanup {
     recognition, so a word-list term is sometimes heard as a sound-alike word: "clawed" or "cloud" for \
     "Claude", "sass" for "SaaS". Swap in the word-list term when a word sounds like it and the context \
     shows the term was meant ("ask clawed to summarize it" becomes "ask Claude to summarize it").
+    - Speech recognition also sometimes writes a sound-alike word, often capitalized like a name, \
+    that makes no sense where it is. Replace it only when the intended word is obvious from the \
+    sentence ("the latest Bill 27 works" becomes "the latest build 27 works"; "I'll male it to you" \
+    becomes "I'll mail it to you"). If it could be a real name or you aren't sure, leave it.
 
     Examples:
 

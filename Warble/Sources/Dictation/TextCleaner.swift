@@ -20,10 +20,50 @@ enum TextCleaner {
         text = removeFillers(text)
         text = removeInterruptingFillers(text)
         text = removeStutters(text)
+        text = spokenNumbersAsDigits(text)
         text = applySpokenCommands(text)
         text = tidySpacing(text)
         text = capitaliseSentences(text)
         return text
+    }
+
+    private static let units = ["one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                                "six": 6, "seven": 7, "eight": 8, "nine": 9]
+    private static let teens = ["ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+                                "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19]
+    private static let tens = ["twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+                               "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90]
+
+    /// Writes spoken numbers from 11 to 99 as digits ("twenty seven" becomes
+    /// "27", "eighteen" becomes "18"), and smaller ones after a label such as
+    /// "build" or "page" ("build eight" becomes "build 8"). Ordinary words like
+    /// "one of them" are left alone. Pure, unit tested.
+    static func spokenNumbersAsDigits(_ text: String) -> String {
+        let pattern = #"\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\b(?![\s-]+(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)\b)(?:[\s-]+(one|two|three|four|five|six|seven|eight|nine)\b)?|\b(eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\b|\b(build|version|number|step|page|chapter|item|option|room|level|floor|gate|flight|platform|slide|section|episode|season)(\s+)(one|two|three|four|five|six|seven|eight|nine|ten)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return text }
+        let ns = text as NSString
+        var result = ""
+        var last = 0
+        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            func group(_ i: Int) -> String? {
+                let r = match.range(at: i)
+                return r.location == NSNotFound ? nil : ns.substring(with: r)
+            }
+            let replacement: String
+            if let ten = group(1).flatMap({ tens[$0.lowercased()] }) {
+                replacement = String(ten + (group(2).flatMap { units[$0.lowercased()] } ?? 0))
+            } else if let teen = group(3).flatMap({ teens[$0.lowercased()] }) {
+                replacement = String(teen)
+            } else if let label = group(4), let space = group(5), let small = group(6)?.lowercased(),
+                      let value = units[small] ?? teens[small] {
+                replacement = label + space + String(value)
+            } else {
+                continue
+            }
+            result += ns.substring(with: NSRange(location: last, length: match.range.location - last)) + replacement
+            last = match.range.location + match.range.length
+        }
+        return result + ns.substring(from: last)
     }
 
     /// The light tidy-up for call transcripts: drops ums, uhs and repeated
