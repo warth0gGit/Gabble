@@ -19,8 +19,10 @@ enum TextCleaner {
         text = applyReplacements(text, replacements)
         text = removeFillers(text)
         text = removeInterruptingFillers(text)
+        text = removeFalseStarts(text)
         text = removeStutters(text)
         text = spokenNumbersAsDigits(text)
+        text = spokenDecimalsAsDigits(text)
         text = applySpokenCommands(text)
         text = tidySpacing(text)
         text = capitaliseSentences(text)
@@ -33,6 +35,69 @@ enum TextCleaner {
                                 "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19]
     private static let tens = ["twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
                                "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90]
+
+    /// Short words that are real words, so never treated as a cut-off start.
+    private static let shortWords: Set<String> = [
+        "a", "i", "an", "as", "at", "be", "by", "do", "go", "he", "if", "in", "is", "it", "me", "my", "no",
+        "of", "oh", "ok", "on", "or", "so", "to", "up", "us", "we", "ah", "am", "hi", "the", "and",
+        "for", "but", "not", "you", "are", "was", "can", "all", "any", "had", "her", "his", "how", "its",
+        "let", "may", "new", "now", "old", "one", "our", "out", "see", "she", "two", "who", "why", "yes",
+        "yet", "did", "get", "got", "has", "him", "own", "say", "too", "use", "way", "day", "off", "per",
+        "mr", "mrs", "ms", "dr", "st", "jr", "sr", "vs", "etc", "pm", "tv", "uk", "eu", "ai", "re", "pr",
+    ]
+
+    /// Drops a cut-off word you restarted: "I'll se send it" becomes "I'll send
+    /// it", and "build tw, build twenty eight" becomes "build twenty eight".
+    /// Only 2-3 letter fragments that aren't real words count. Pure, unit tested.
+    static func removeFalseStarts(_ text: String) -> String {
+        var tokens = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        func bare(_ t: String) -> String { t.lowercased().trimmingCharacters(in: .punctuationCharacters) }
+        func isFragment(_ t: String) -> Bool {
+            let b = bare(t)
+            return (2...3).contains(b.count) && b.allSatisfy(\.isLetter) && !shortWords.contains(b)
+        }
+        var i = 0
+        while i < tokens.count {
+            let frag = bare(tokens[i])
+            if isFragment(tokens[i]) {
+                // "se send": the next word starts with the fragment.
+                if i + 1 < tokens.count, bare(tokens[i + 1]).count > frag.count, bare(tokens[i + 1]).hasPrefix(frag) {
+                    tokens.remove(at: i)
+                    continue
+                }
+                // "build tw, build twenty": the word before is said again, then the full word.
+                if i >= 1, i + 2 < tokens.count, bare(tokens[i + 1]) == bare(tokens[i - 1]),
+                   bare(tokens[i + 2]).hasPrefix(frag) {
+                    tokens.removeSubrange(i...(i + 1))
+                    continue
+                }
+            }
+            i += 1
+        }
+        return tokens.joined(separator: " ")
+    }
+
+    /// "zero point nine" becomes "0.9", "27 point five" becomes "27.5". Pure, unit tested.
+    static func spokenDecimalsAsDigits(_ text: String) -> String {
+        let digit = "zero|oh|one|two|three|four|five|six|seven|eight|nine|\\d+"
+        let pattern = "(?i)\\b(\\d+|zero|one|two|three|four|five|six|seven|eight|nine)\\s+point\\s+((?:\(digit))(?:\\s+(?:\(digit)))*)\\b"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        let values = ["zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+                      "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"]
+        func digits(_ words: String) -> String {
+            words.split(separator: " ").map { values[$0.lowercased()] ?? String($0) }.joined()
+        }
+        let ns = text as NSString
+        var result = ""
+        var last = 0
+        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let whole = digits(ns.substring(with: match.range(at: 1)))
+            let fraction = digits(ns.substring(with: match.range(at: 2)))
+            result += ns.substring(with: NSRange(location: last, length: match.range.location - last)) + whole + "." + fraction
+            last = match.range.location + match.range.length
+        }
+        return result + ns.substring(from: last)
+    }
 
     /// Writes spoken numbers from 11 to 99 as digits ("twenty seven" becomes
     /// "27", "eighteen" becomes "18"), and smaller ones after a label such as

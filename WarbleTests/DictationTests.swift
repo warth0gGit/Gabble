@@ -351,3 +351,23 @@ final class SpokenNumberTests: XCTestCase {
         XCTAssertEqual(TextCleaner.clean("I'm testing the latest build twenty seven"), "I'm testing the latest build 27")
     }
 }
+
+final class FalseStartAndDecimalTests: XCTestCase {
+    func testCutOffWordsAreDropped() {
+        XCTAssertEqual(TextCleaner.removeFalseStarts("Build tw build twenty eight"), "Build twenty eight")
+        XCTAssertEqual(TextCleaner.removeFalseStarts("I'll se send it"), "I'll send it")
+        XCTAssertEqual(TextCleaner.clean("build tw build twenty eight was the last one"), "Build 28 was the last one")
+    }
+
+    func testRealWordsStay() {
+        XCTAssertEqual(TextCleaner.removeFalseStarts("Dr Drake said to go to the gym"), "Dr Drake said to go to the gym")
+        XCTAssertEqual(TextCleaner.removeFalseStarts("we went in inside"), "we went in inside")
+    }
+
+    func testDecimals() {
+        XCTAssertEqual(TextCleaner.spokenDecimalsAsDigits("tidied in zero point nine seconds"), "tidied in 0.9 seconds")
+        XCTAssertEqual(TextCleaner.spokenDecimalsAsDigits("27 point five percent"), "27.5 percent")
+        XCTAssertEqual(TextCleaner.spokenDecimalsAsDigits("the point is"), "the point is")
+        XCTAssertEqual(TextCleaner.clean("it took one point two seconds"), "It took 1.2 seconds")
+    }
+}

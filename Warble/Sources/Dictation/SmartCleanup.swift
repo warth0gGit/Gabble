@@ -113,7 +113,9 @@ enum SmartCleanup {
     - Speech recognition also sometimes writes a sound-alike word, often capitalized like a name, \
     that makes no sense where it is. Replace it only when the intended word is obvious from the \
     sentence ("the latest Bill 27 works" becomes "the latest build 27 works"; "I'll male it to you" \
-    becomes "I'll mail it to you"). If it could be a real name or you aren't sure, leave it.
+    becomes "I'll mail it to you"; "it got tided up" becomes "it got tidied up"; "we need to by \
+    more time" becomes "we need to buy more time"). If it could be a real name or you aren't sure, \
+    leave it.
 
     Examples:
 
