@@ -387,3 +387,16 @@ final class LeakedFormatTests: XCTestCase {
                        "Send the schema: it's ready.")
     }
 }
+
+final class TruncatedTidyTests: XCTestCase {
+    func testACutOffTidyUpIsRejected() {
+        XCTAssertNil(SmartCleanup.validated("Yeah, sometimes it's just not",
+                                            original: "yeah sometimes it's just not working at all when I let go of the key"))
+    }
+
+    func testASelfCorrectionMayShortenIt() {
+        XCTAssertEqual(SmartCleanup.validated("Meet on Wednesday at 3.",
+                                              original: "meet on Tuesday at 3 no wait actually Wednesday at 3"),
+                       "Meet on Wednesday at 3.")
+    }
+}

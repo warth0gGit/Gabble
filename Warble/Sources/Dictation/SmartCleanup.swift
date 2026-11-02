@@ -204,6 +204,14 @@ enum SmartCleanup {
     /// (for example, the model replying to a question instead of tidying it).
     static let leakMarkers = ["cleaneddictation", "schema:", "response format", "\"type\":", "\"properties\""]
 
+    private static let correctionCues: Set<String> = [
+        "no", "actually", "wait", "sorry", "scratch", "scrap", "rather", "instead", "correction", "mean",
+    ]
+
+    static func hasCorrectionCue(_ text: String) -> Bool {
+        text.lowercased().split(whereSeparator: { !$0.isLetter }).contains { correctionCues.contains(String($0)) }
+    }
+
     static func validated(_ output: String, original: String) -> String? {
         var result = output.trimmingCharacters(in: .whitespacesAndNewlines)
         result = strippingChatter(result, original: original)
@@ -221,6 +229,10 @@ enum SmartCleanup {
         }
         let ratio = Double(result.count) / Double(max(original.count, 1))
         if original.count > 40, ratio < 0.4 || ratio > 1.6 { return nil }
+        // Apple's model sometimes stops part-way ("Yeah, sometimes it's just
+        // not"). Your words are already free of ums, so a big cut is only right
+        // when you corrected yourself.
+        if original.count > 20, ratio < 0.75, !hasCorrectionCue(original) { return nil }
         if original.count <= 40, result.count > original.count + 40 { return nil }
         return result
     }
