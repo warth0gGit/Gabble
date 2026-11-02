@@ -23,6 +23,12 @@ enum TextInserter {
 
         sendPaste()
 
+        // A long dictation stays on the clipboard: apps like Claude turn a big
+        // paste into an attachment and read the clipboard a while later, and a
+        // restored clipboard made the text vanish. It also means you can press
+        // Cmd-V to paste it again.
+        guard !keepsOnClipboard(text) else { return }
+
         // Give slower apps (Electron apps like Claude and Teams, or a busy Mac)
         // time to read the clipboard before the user's own copy is put back.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -32,6 +38,9 @@ enum TextInserter {
             if !saved.isEmpty { pasteboard.writeObjects(saved) }
         }
     }
+
+    /// Dictations this long are left on the clipboard rather than swapped back. Pure, unit tested.
+    nonisolated static func keepsOnClipboard(_ text: String) -> Bool { text.count > 1_000 }
 
     /// Types text straight into the focused app, without touching the clipboard.
     /// Used to show words live while you are still speaking.

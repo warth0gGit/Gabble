@@ -371,3 +371,10 @@ final class FalseStartAndDecimalTests: XCTestCase {
         XCTAssertEqual(TextCleaner.clean("it took one point two seconds"), "It took 1.2 seconds")
     }
 }
+
+final class LongPasteTests: XCTestCase {
+    func testLongDictationsStayOnTheClipboard() {
+        XCTAssertFalse(TextInserter.keepsOnClipboard("A short message."))
+        XCTAssertTrue(TextInserter.keepsOnClipboard(String(repeating: "word ", count: 300)))
+    }
+}
