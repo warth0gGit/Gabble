@@ -95,6 +95,26 @@ enum VoiceMatcher {
         }
         return best.name
     }
+
+    /// How far a voice can drift from someone already named on this call and
+    /// still be them. Looser than for remembered people: same call, same mic.
+    static let sameCallDistance: Float = 0.6
+
+    /// Mid-call, the voice engine sometimes starts a new voice for someone
+    /// already on the call. Prefer the people on this call, and only name
+    /// someone who isn't on it when they're a much closer match.
+    static func matchInCall(_ embedding: [Float], onCall: [Voiceprint], saved: [Voiceprint]) -> String? {
+        let present = Set(onCall.map { $0.name.lowercased() })
+        let others = saved.filter { !present.contains($0.name.lowercased()) }
+        let nearestOnCall = onCall.map { (name: $0.name, distance: distance(embedding, $0.embedding)) }
+            .min { $0.distance < $1.distance }
+        let nearestOther = others.map { distance(embedding, $0.embedding) }.min() ?? 2
+        if let nearestOnCall, nearestOnCall.distance <= sameCallDistance,
+           !(nearestOther <= maxDistance && nearestOther + 0.15 < nearestOnCall.distance) {
+            return nearestOnCall.name
+        }
+        return match(embedding, known: saved)
+    }
 }
 
 /// Matches transcript phrases to voices. Pure, unit tested.

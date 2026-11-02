@@ -484,15 +484,24 @@ final class CallController: ObservableObject {
         let talk = SpeakerAssigner.talkTime(voiceSegments)
         for id in Set(voiceSegments.map(\.speakerID))
         where !voicesChecked.contains(id) && !voicesBeingChecked.contains(id) && (talk[id] ?? 0) >= askAfterSeconds {
-            guard !voices.voices.isEmpty else { voicesChecked.insert(id); continue }
+            guard !voices.voices.isEmpty || !namesThisCall.isEmpty else { voicesChecked.insert(id); continue }
             voicesBeingChecked.insert(id)
             let known = voices.voices
+            let named = namesThisCall
             Task { [weak self] in
                 let embedding = await speakers.embedding(for: id)
+                // The people already named on this call, as they sound today.
+                var onCall: [Voiceprint] = []
+                for (otherID, name) in named where otherID != id {
+                    if let other = await speakers.embedding(for: otherID) {
+                        onCall.append(Voiceprint(name: name, embedding: other))
+                    }
+                }
                 guard let self else { return }
                 self.voicesBeingChecked.remove(id)
                 self.voicesChecked.insert(id)
-                if let embedding, let name = VoiceMatcher.match(embedding, known: known), self.namesThisCall[id] == nil {
+                if let embedding, let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: known),
+                   self.namesThisCall[id] == nil {
                     self.namesThisCall[id] = name
                     self.refreshLiveSpeakers()
                 }

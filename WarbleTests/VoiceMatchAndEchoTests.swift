@@ -29,6 +29,19 @@ final class VoiceMatcherTests: XCTestCase {
         XCTAssertNil(VoiceMatcher.match(voice(0, blend: 1, amount: 0.9), known: [shadee, sarah]))
         XCTAssertNil(VoiceMatcher.match(voice(0), known: []))
     }
+
+    func testANewVoiceMidCallIsSomeoneAlreadyOnIt() {
+        let shadee = Voiceprint(name: "Shadee Young", embedding: voice(0))
+        let jala = Voiceprint(name: "Jala", embedding: voice(1))
+        // Jala's voice drifted partway between her and Shadee, slightly nearer Shadee.
+        let drifted = voice(1, blend: 0, amount: 1.1)
+        XCTAssertEqual(VoiceMatcher.matchInCall(drifted, onCall: [jala], saved: [shadee]), "Jala")
+        // Shadee really joins: a near-perfect match to her beats a loose one to Jala.
+        XCTAssertEqual(VoiceMatcher.matchInCall(voice(0, blend: 2, amount: 0.1), onCall: [jala], saved: [shadee, jala]),
+                       "Shadee Young")
+        // Nobody on the call yet: the usual rules.
+        XCTAssertEqual(VoiceMatcher.matchInCall(voice(0), onCall: [], saved: [shadee]), "Shadee Young")
+    }
 }
 
 final class EchoFilterTests: XCTestCase {
