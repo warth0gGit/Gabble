@@ -315,7 +315,7 @@ final class CallController: ObservableObject {
         liveOthers = ""
         panelMinimized = false
         savingRereads = appState.recognitionModel == .parakeet
-        summaryWillFollow = SmartCleanup.isAvailable
+        summaryWillFollow = CallSummariser.canSummarise
             && SummaryChunker.wordCount(recorder.transcript.plainText) >= SummaryChunker.minimumWords
         savingStep = savingRereads ? .rereading : .tidying
         state = .saving
@@ -532,7 +532,7 @@ final class CallController: ObservableObject {
     /// Whether to write a summary, so the note can say one is on its way (or why not).
     private func initialSummaryState(for transcript: CallTranscript) -> CallSummaryState {
         guard CallSummariser.isWorthSummarising(transcript) else { return .none }
-        guard SmartCleanup.isAvailable else {
+        guard CallSummariser.canSummarise else {
             return .failed(SmartCleanup.unavailableReason ?? "Apple Intelligence isn't available on this Mac.")
         }
         return .pending
@@ -553,8 +553,10 @@ final class CallController: ObservableObject {
     private func addSummary(_ result: CallSummaryState, to call: CallTranscript, savedAt url: URL) {
         // Usually the call is still the last one saved; it may have been moved
         // to another folder since, so use where it is now.
+        let corrections = result.summary?.corrections ?? []
         if var saved = lastSaved, saved.transcript.started == call.started, saved.transcript.appName == call.appName {
             saved.transcript.summary = result
+            saved.transcript.apply(corrections)
             lastSaved = saved
             if transcript?.started == call.started { transcript = saved.transcript }
             try? saved.transcript.markdown.write(to: saved.url, atomically: true, encoding: .utf8)
@@ -564,6 +566,7 @@ final class CallController: ObservableObject {
         guard let current = locate(url) else { return }
         var updated = call
         updated.summary = result
+        updated.apply(corrections)
         let folder = current.deletingLastPathComponent().standardizedFileURL.path
         let calls = callsFolder.standardizedFileURL.path
         if folder.hasPrefix(calls + "/") { updated.category = String(folder.dropFirst(calls.count + 1)) }

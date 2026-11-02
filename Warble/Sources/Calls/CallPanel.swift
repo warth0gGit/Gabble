@@ -132,7 +132,7 @@ struct CallPanelView: View {
     }
 
     private var showsMiniPill: Bool {
-        calls.isRecording && calls.panelMinimized && calls.askingWho == nil
+        calls.isRecording && calls.panelMinimized
     }
 
     private var card: some View {
@@ -200,7 +200,10 @@ struct CallPanelView: View {
             Button {
                 calls.panelMinimized = true
             } label: {
-                Image(systemName: "minus").font(.caption.weight(.bold)).frame(width: 18, height: 18)
+                Image(systemName: "minus").font(.caption.weight(.bold)).frame(width: 22, height: 22)
+                    // Without this only the thin dash itself takes the click, and a
+                    // click beside it drags the card instead.
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -238,7 +241,9 @@ struct CallPanelView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(CallPanelColor.amber)
             Spacer()
-            Button("Skip", action: skipVoice)
+            Button(action: skipVoice) {
+                Text("Skip").padding(.horizontal, 4).padding(.vertical, 2).contentShape(Rectangle())
+            }
                 .buttonStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -264,7 +269,11 @@ struct CallPanelView: View {
             HStack(spacing: 8) {
                 PulsingDot()
                 ElapsedTime(since: calls.recordingStarted)
-                if let talking = calls.liveSpeakers.first(where: \.isSpeaking) {
+                if calls.askingWho != nil {
+                    Text("Who's this?")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(CallPanelColor.amber)
+                } else if let talking = calls.liveSpeakers.first(where: \.isSpeaking) {
                     Text(talking.name)
                         .font(.caption)
                         .foregroundStyle(WarbleColor.glow)
@@ -294,7 +303,7 @@ struct CallPanelView: View {
         if calls.savingRereads { list.append(Step(title: "Re-reading the recording for accuracy", step: .rereading)) }
         list.append(Step(title: "Tidying up", step: .tidying))
         list.append(Step(title: "Saving to Obsidian", step: .saving))
-        if calls.summaryWillFollow { list.append(Step(title: "Summary (added in about a minute)", step: nil)) }
+        if calls.summaryWillFollow { list.append(Step(title: "Summary and actions (added in a minute or two)", step: nil)) }
         return list
     }
 

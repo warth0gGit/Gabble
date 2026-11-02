@@ -15,7 +15,7 @@ struct SummaryNotes {
     var keyPoints: [String]
     @Guide(description: "What the people on the call agreed or decided. Empty if nothing was decided.", .maximumCount(6))
     var decisions: [String]
-    @Guide(description: "Tasks someone said they, or someone else, would do. Empty if there were none.", .maximumCount(10))
+    @Guide(description: "Every task, promise or commitment: anything someone said they have to, need to, will or must do, or asked someone else to do. Empty if there were none.", .maximumCount(10))
     var actionItems: [SummaryAction]
     @Guide(description: "Questions raised but not answered. Empty if none.", .maximumCount(5))
     var openQuestions: [String]
@@ -31,6 +31,21 @@ struct SummaryAction {
     var task: String
     @Guide(description: "When it is due, in the words used on the call, such as by Friday. Empty if no time was given.")
     var due: String
+}
+
+/// The careful second pass: only the tasks, nothing else.
+@Generable
+struct ActionList {
+    @Guide(description: "Every task in the transcript, one per item. Include tasks people set themselves (I have to, I need to, I'll, I must) and tasks they asked others to do. Empty if there were none.", .maximumCount(15))
+    var actionItems: [SummaryAction]
+}
+
+/// A second look at one sentence that sounded like a task but ended up with no action.
+@Generable
+struct ActionCheck {
+    @Guide(description: "True if the sentence gives someone a task to do, even an informal one. False if it is only past events, a general opinion or small talk.")
+    var isTask: Bool
+    var action: SummaryAction
 }
 
 @Generable
@@ -64,8 +79,30 @@ enum CallSummariser {
         SummaryChunker.wordCount(transcript.plainText) >= SummaryChunker.minimumWords
     }
 
-    /// Summarises the call. Never throws: the result says what happened.
+    /// Summarises the call: with Claude (see ClaudeSummariser) unless it's
+    /// switched off or can't answer, otherwise with Apple Intelligence.
     static func summarise(_ transcript: CallTranscript, terms: [String]) async -> CallSummaryState {
+        var claudeProblem: String?
+        if ClaudeSummariser.engine == .claude {
+            switch await ClaudeSummariser.summarise(transcript, terms: terms) {
+            case .success(let summary): return .done(summary)
+            case .failure(let problem): claudeProblem = problem.reason
+            }
+        }
+        let state = await summariseOnDevice(transcript, terms: terms)
+        if case .failed(let reason) = state, let claudeProblem {
+            return .failed("\(claudeProblem) Apple Intelligence couldn't do it either: \(reason)")
+        }
+        return state
+    }
+
+    /// Whether either engine might be able to write a summary.
+    static var canSummarise: Bool {
+        SmartCleanup.isAvailable || ClaudeSummariser.engine == .claude
+    }
+
+    /// Summarises the call with Apple Intelligence. Never throws: the result says what happened.
+    static func summariseOnDevice(_ transcript: CallTranscript, terms: [String]) async -> CallSummaryState {
         guard SmartCleanup.isAvailable else {
             return .failed(SmartCleanup.unavailableReason ?? "Apple Intelligence isn't available on this Mac.")
         }
@@ -97,7 +134,97 @@ enum CallSummariser {
             result = await combine(parts)
         }
         result.skippedParts += skipped
+        result.actionItems = await findActions(in: transcript, chunks: chunks, intro: wordList, alreadyFound: result.actionItems)
         return .done(result)
+    }
+
+    // MARK: - Action items
+
+    /// Most checking goes into the actions, because a missed task matters
+    /// most. Three steps, each a smaller job the on-device model does well:
+    /// 1. A pass over each part of the call for tasks and nothing else, with
+    ///    the sentences that sound like tasks pointed out.
+    /// 2. Any of those sentences that still has no action is checked on its
+    ///    own, so a clear commitment is either kept or deliberately ruled out.
+    /// 3. If Apple Intelligence can't answer about one, the sentence is kept
+    ///    as an action to check, rather than lost.
+    static func findActions(in transcript: CallTranscript, chunks: [SummaryChunker.Chunk], intro: String,
+                            alreadyFound: [CallSummary.ActionItem]) async -> [CallSummary.ActionItem] {
+        var actions = alreadyFound
+        let candidates = ActionSpotter.candidates(in: transcript)
+
+        for chunk in chunks {
+            let inChunk = candidates.filter { $0.offset >= chunk.start - 1 && $0.offset <= chunk.end + 1 }
+            var prompt = intro + "List every task in this transcript. Nothing else is needed.\n"
+            if !inChunk.isEmpty {
+                prompt += "\nThese lines may contain tasks. Look at each one carefully:\n"
+                    + inChunk.prefix(25).map { "- " + $0.line }.joined(separator: "\n") + "\n"
+            }
+            prompt += "\nTranscript:\n" + chunk.text
+            guard case .success(let list) = await respond(to: prompt, generating: ActionList.self) else { continue }
+            for item in list.actionItems {
+                if let action = action(from: item) { add(action, to: &actions) }
+            }
+        }
+
+        // Deadlines first, and a limit so a very long call doesn't take ages.
+        let unchecked = candidates.filter { $0.isStrong && !ActionSpotter.isCovered($0, by: actions) }
+        let toCheck = (unchecked.filter(\.hasDeadline) + unchecked.filter { !$0.hasDeadline }).prefix(30)
+        for candidate in toCheck where !ActionSpotter.isCovered(candidate, by: actions) {
+            let prompt = intro + """
+            Does this sentence from a call give someone a task? \
+            If it does, write the task. The speaker is "\(candidate.speaker)"; \
+            if they are talking about something they will do themselves, they are the owner.
+
+            Sentence: \(candidate.line)
+
+            The lines around it, for context:
+            \(context(around: candidate, in: transcript))
+            """
+            switch await respond(to: prompt, generating: ActionCheck.self) {
+            case .success(let check):
+                guard check.isTask else { continue }   // ruled out on purpose
+                var item = check.action
+                if clean(item.owner).isEmpty, candidate.isOwn { item.owner = candidate.speaker }
+                if let action = action(from: item) { add(action, to: &actions) }
+            case .failure:
+                // Better an action to tidy up than a missed one.
+                add(CallSummary.ActionItem(owner: candidate.isOwn ? owner(candidate.speaker) : "",
+                                           task: "Check: \u{201C}\(candidate.sentence)\u{201D}",
+                                           due: ActionSpotter.deadline(in: candidate.sentence)), to: &actions)
+            }
+        }
+        return actions
+    }
+
+    /// Adds an action unless the same task is already there.
+    static func add(_ item: CallSummary.ActionItem, to actions: inout [CallSummary.ActionItem]) {
+        let words = ActionSpotter.contentWords(item.task)
+        let repeated = actions.contains { existing in
+            let shared = words.intersection(ActionSpotter.contentWords(existing.task)).count
+            let smaller = min(words.count, ActionSpotter.contentWords(existing.task).count)
+            return existing.task.lowercased() == item.task.lowercased()
+                || (smaller > 0 && Double(shared) / Double(smaller) >= 0.7
+                    && (existing.owner == item.owner || existing.owner.isEmpty || item.owner.isEmpty))
+        }
+        if !repeated { actions.append(item) }
+    }
+
+    /// The two turns either side of a sentence.
+    private static func context(around candidate: ActionSpotter.Candidate, in transcript: CallTranscript) -> String {
+        let turns = transcript.merged
+        guard let index = turns.firstIndex(where: { $0.offset == candidate.offset && $0.speaker == candidate.speaker }) else {
+            return candidate.line
+        }
+        return turns[max(0, index - 2)...min(turns.count - 1, index + 2)]
+            .map { "\($0.speaker) (\(CallTranscript.timestamp($0.offset))): \($0.text)" }
+            .joined(separator: "\n")
+    }
+
+    private static func action(from item: SummaryAction) -> CallSummary.ActionItem? {
+        let task = clean(item.task)
+        guard !task.isEmpty else { return nil }
+        return CallSummary.ActionItem(owner: owner(item.owner), task: task, due: nothingToEmpty(clean(item.due)))
     }
 
     // MARK: - Steps
@@ -177,13 +304,18 @@ enum CallSummariser {
     /// fill its memory. Waits and tries again if macOS is limiting Warble
     /// while it's in the background, or the model is busy with a dictation.
     private static func respond(to prompt: String) async -> Result<SummaryNotes, CleanupFailure> {
+        await respond(to: prompt, generating: SummaryNotes.self)
+    }
+
+    private static func respond<Answer: Generable & Sendable>(to prompt: String, generating type: Answer.Type)
+        async -> Result<Answer, CleanupFailure> {
         let waits: [Double] = [15, 45, 90]
         var attempt = 0
         while true {
-            let outcome: Result<SummaryNotes, CleanupFailure>? = await withDeadline(seconds: requestDeadline) {
+            let outcome: Result<Answer, CleanupFailure>? = await withDeadline(seconds: requestDeadline) {
                 let session = LanguageModelSession(model: SmartCleanup.model, instructions: instructions)
                 do {
-                    let response = try await session.respond(to: prompt, generating: SummaryNotes.self,
+                    let response = try await session.respond(to: prompt, generating: Answer.self,
                                                              options: GenerationOptions(temperature: 0.2))
                     return .success(response.content)
                 } catch let error as LanguageModelSession.GenerationError {
@@ -229,11 +361,7 @@ enum CallSummariser {
             overview: clean(notes.overview),
             keyPoints: cleanList(notes.keyPoints),
             decisions: cleanList(notes.decisions),
-            actionItems: notes.actionItems.compactMap { item -> CallSummary.ActionItem? in
-                let task = clean(item.task)
-                guard !task.isEmpty else { return nil }
-                return CallSummary.ActionItem(owner: owner(item.owner), task: task, due: nothingToEmpty(clean(item.due)))
-            },
+            actionItems: notes.actionItems.compactMap(action(from:)),
             openQuestions: cleanList(notes.openQuestions),
             topics: topics)
     }

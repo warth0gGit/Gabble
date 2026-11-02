@@ -388,6 +388,7 @@ struct CallsView: View {
                     NSWorkspace.shared.activateFileViewerSelecting([calls.callsFolder])
                 }
             }
+            SummaryEngineSection()
             KnownVoicesSection(voices: calls.voices)
         }
         .formStyle(.grouped)
@@ -713,5 +714,55 @@ struct MicrophonePicker: View {
         Text("AirPods hear you best, but each dictation switches them into call mode for a moment, so music sounds like a phone call until you stop. The Mac's built-in microphone starts instantly and leaves your AirPods alone.")
             .font(.callout)
             .foregroundStyle(.secondary)
+    }
+}
+
+/// Who writes call summaries and action items: Claude (through Claude Code
+/// on this Mac) or Apple Intelligence.
+struct SummaryEngineSection: View {
+    @AppStorage(ClaudeSummariser.engineKey) private var engine = ClaudeSummariser.Engine.claude.rawValue
+    @State private var claudePath: String?
+    @State private var checking = true
+
+    var body: some View {
+        Section("Summaries and action items") {
+            Picker("Written by", selection: $engine) {
+                Text("Claude (best)").tag(ClaudeSummariser.Engine.claude.rawValue)
+                Text("Apple Intelligence (on this Mac)").tag(ClaudeSummariser.Engine.apple.rawValue)
+            }
+            if engine == ClaudeSummariser.Engine.claude.rawValue {
+                if checking {
+                    Text("Looking for Claude Code…").font(.callout).foregroundStyle(.secondary)
+                } else if claudePath != nil {
+                    Label("Claude Code is installed. Warble uses your Claude account; the transcript is sent to Anthropic.",
+                          systemImage: "checkmark.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label("Claude Code isn't installed, so Apple Intelligence will be used for now.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    Text("To install it, open Terminal and paste: curl -fsSL https://claude.ai/install.sh | bash. Then type claude and sign in.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button("Check again", action: check)
+                }
+            }
+            Text("Claude reads the whole call, catches every action, and fixes misheard words in the transcript. If Claude can't answer, Apple Intelligence writes the summary instead.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .onAppear(perform: check)
+    }
+
+    private func check() {
+        checking = true
+        Task {
+            let path = await Task.detached(priority: .utility) { ClaudeSummariser.findClaude()?.path }.value
+            claudePath = path
+            checking = false
+        }
     }
 }

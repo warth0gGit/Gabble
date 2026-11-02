@@ -28,9 +28,17 @@ struct CallSummary: Equatable {
     var topics: [Topic] = []
     /// Parts of the call Apple Intelligence wouldn't or couldn't read.
     var skippedParts = 0
-
+    /// Words speech recognition misheard, fixed in the transcript when the summary is added.
+    var corrections: [Correction] = []
     /// Who wrote it, for the front matter.
-    static let writer = "Apple Intelligence (on this Mac)"
+    var writer = CallSummary.appleWriter
+
+    struct Correction: Equatable {
+        var heard: String
+        var meant: String
+    }
+
+    static let appleWriter = "Apple Intelligence (on this Mac)"
 
     // MARK: - Markdown
 
@@ -104,7 +112,11 @@ struct CallSummary: Equatable {
             list.contains { text.range(of: "\\b\($0)\\b", options: .regularExpression) != nil }
         }
 
-        if words(["today", "tonight", "end of day", "end of the day", "eod"]) { return day }
+        // Claude gives an exact day as 2026-11-04.
+        if let match = text.range(of: #"\b\d{4}-\d{2}-\d{2}\b"#, options: .regularExpression) {
+            let f = dayFormatter(calendar)
+            if let date = f.date(from: String(text[match])) { return date }
+        }
         if words(["tomorrow"]) { return plus(1) }
 
         let weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
@@ -114,8 +126,11 @@ struct CallSummary: Equatable {
             if ahead == 0 && !allowToday { ahead = 7 }
             return plus(ahead)
         }
-        if words(["end of the week", "end of week", "eow", "this week"]) { return next(6, allowToday: true) }
+        // A named day wins: "close of play on Wednesday" is Wednesday.
         if let index = weekdays.firstIndex(where: { words([$0]) }) { return next(index + 1, allowToday: false) }
+        if words(["end of the week", "end of week", "eow", "this week"]) { return next(6, allowToday: true) }
+        if words(["today", "tonight", "end of day", "end of the day", "eod", "close of play", "end of play",
+                  "cop", "closer play", "close a play", "close of business", "end of business", "cob", "eob"]) { return day }
 
         // "7 November", "7th Nov", "November 7", "Nov 7th"
         let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]

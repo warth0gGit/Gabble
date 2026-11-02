@@ -77,6 +77,22 @@ struct CallTranscript: Equatable {
         return result
     }
 
+    /// Fixes words speech recognition misheard, e.g. "closer play" to "close
+    /// of play". Whole words only, ignoring case.
+    mutating func apply(_ corrections: [CallSummary.Correction]) {
+        for fix in corrections {
+            let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: fix.heard) + "(?![\\p{L}\\p{N}])"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            let template = NSRegularExpression.escapedTemplate(for: fix.meant)
+            segments = segments.map { segment in
+                var s = segment
+                s.text = regex.stringByReplacingMatches(in: s.text, range: NSRange(s.text.startIndex..., in: s.text),
+                                                        withTemplate: template)
+                return s
+            }
+        }
+    }
+
     /// Renames speakers, e.g. "Others" phrases to the person recognised by voice.
     mutating func relabel(_ label: (Segment) -> String) {
         segments = segments.map { segment in
@@ -128,7 +144,7 @@ struct CallTranscript: Equatable {
         lines.append("category: \(yaml(category))")
         if let summary = summary.summary {
             if !summary.headline.isEmpty { lines.append("summary: \(yaml(summary.headline))") }
-            lines.append("summarized_by: \(yaml(CallSummary.writer))")
+            lines.append("summarized_by: \(yaml(summary.writer))")
         }
         lines.append("tags: [\((["call", "warble"] + (meeting?.seriesID != nil ? ["recurring"] : [])).joined(separator: ", "))]")
         lines.append("---")
@@ -145,7 +161,7 @@ struct CallTranscript: Equatable {
             for line in transcriptLines { lines += [line, ""] }
         case .pending:
             lines.append("> [!summary] Summary on its way")
-            lines.append("> Apple Intelligence is writing a summary of this call on your Mac. It will appear here in a minute or two.")
+            lines.append("> A summary and action items are being written. They will appear here in a minute or two.")
             lines.append("")
             lines += ["## Transcript", ""]
             for line in transcriptLines { lines += [line, ""] }
