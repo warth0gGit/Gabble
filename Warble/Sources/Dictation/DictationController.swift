@@ -42,9 +42,10 @@ final class DictationController: ObservableObject {
     private let hotkey = HotkeyMonitor()
     private let correctionWatcher = CorrectionWatcher()
     private var hud: DictationHUD?
-    private var matrix: MatrixOverlay?
-    /// Where the Matrix effect goes for this dictation (Cocoa coordinates), if it's on.
-    private var matrixArea: CGRect?
+    private var indicator: InFieldIndicator?
+    /// Where the in-box indicator goes for this dictation (Cocoa coordinates),
+    /// or nil to use the capsule at the bottom of the screen.
+    private var indicatorArea: CGRect?
     private var pressedAt: Date?
     /// When the key went down, by the key event's own clock.
     private var pressedEventTime: TimeInterval?
@@ -215,7 +216,7 @@ final class DictationController: ObservableObject {
         TextInserter.enableAccessibilityForFrontmostApp()
         typer = LivePhraseTyper()
         isLiveTyping = appState.liveTyping && testSink == nil && TextInserter.focusedFieldSupportsLiveEditing()
-        matrixArea = appState.matrixEffect ? Self.focusedTextArea() : nil
+        indicatorArea = appState.inFieldIndicator && testSink == nil ? Self.focusedTextArea() : nil
         phase = .preparing("Starting…")
         usingParakeet = appState.recognitionModel == .parakeet
         if appState.cleanupEnabled && SmartCleanup.isAvailable {
@@ -305,7 +306,7 @@ final class DictationController: ObservableObject {
             let replaced = TextInserter.replaceTyped(typed, with: cleaned)
             let inField = replaced ? cleaned : typed
             lastResult = inField
-            if appState.sendAfterDictating, TextInserter.isChatApp(targetBundleID) { TextInserter.pressReturn(after: 0.2) }
+            if appState.sendAfterDictating { TextInserter.pressReturn(after: 0.2) }
             watchForCorrections(inField)
             return
         }
@@ -399,7 +400,7 @@ final class DictationController: ObservableObject {
             return
         }
         TextInserter.insert(text)
-        if appState.sendAfterDictating, TextInserter.isChatApp(targetBundleID) {
+        if appState.sendAfterDictating {
             // Give the app time to take the paste first; a long one takes longer.
             TextInserter.pressReturn(after: TextInserter.keepsOnClipboard(text) ? 1.5 : 0.35)
         }
@@ -415,33 +416,28 @@ final class DictationController: ObservableObject {
     // MARK: - Floating pop-up
 
     private func updateHUD(for phase: Phase) {
-        if phase == .idle {
+        guard phase != .idle else {
             hud?.hide()
+            indicator?.hide()
+            return
+        }
+        if let area = indicatorArea {
+            // Shown in the text box itself, so no capsule.
+            hud?.hide()
+            if indicator == nil { indicator = InFieldIndicator(controller: self) }
+            indicator?.show(over: area)
         } else {
+            indicator?.hide()
             if hud == nil { hud = DictationHUD(controller: self) }
             hud?.show()
-        }
-        updateMatrix(for: phase)
-    }
-
-    /// The Matrix effect runs while you talk and while the text is tidied,
-    /// and goes away just as the text goes in.
-    private func updateMatrix(for phase: Phase) {
-        switch phase {
-        case .listening, .processing:
-            guard let area = matrixArea else { return }
-            if matrix == nil { matrix = MatrixOverlay() }
-            matrix?.show(over: area)
-        case .idle, .preparing:
-            matrix?.hide()
         }
     }
 
     private static func focusedTextArea() -> CGRect? {
         let geometry = TextInserter.focusedFieldGeometry()
-        guard let area = MatrixOverlay.area(field: geometry.field, caret: geometry.caret),
+        guard let area = InFieldIndicator.area(field: geometry.field, caret: geometry.caret),
               let primary = NSScreen.screens.first else { return nil }
-        return MatrixOverlay.cocoaRect(fromAccessibility: area, primaryScreenHeight: primary.frame.height)
+        return InFieldIndicator.cocoaRect(fromAccessibility: area, primaryScreenHeight: primary.frame.height)
     }
 }
 

@@ -298,18 +298,6 @@ enum TextInserter {
             .replacingOccurrences(of: "\u{00A0}", with: " ")
     }
 
-    /// Chat apps where "send straight away" presses Return. Emails and
-    /// documents never get it.
-    nonisolated static let chatAppBundleIDs: Set<String> = [
-        "com.anthropic.claudefordesktop", "com.openai.chat", "com.tinyspeck.slackmacgap",
-        "com.microsoft.teams2", "com.microsoft.teams", "com.apple.MobileSMS",
-        "net.whatsapp.WhatsApp", "com.hnc.Discord",
-    ]
-
-    nonisolated static func isChatApp(_ bundleID: String?) -> Bool {
-        bundleID.map(chatAppBundleIDs.contains) ?? false
-    }
-
     /// Presses Return, to send the message, a moment after the text goes in.
     static func pressReturn(after delay: Double) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {

@@ -378,13 +378,3 @@ final class LongPasteTests: XCTestCase {
         XCTAssertTrue(TextInserter.keepsOnClipboard(String(repeating: "word ", count: 300)))
     }
 }
-
-final class SendStraightAwayTests: XCTestCase {
-    func testOnlyChatAppsGetReturn() {
-        XCTAssertTrue(TextInserter.isChatApp("com.anthropic.claudefordesktop"))
-        XCTAssertTrue(TextInserter.isChatApp("com.tinyspeck.slackmacgap"))
-        XCTAssertFalse(TextInserter.isChatApp("com.apple.mail"))
-        XCTAssertFalse(TextInserter.isChatApp("com.microsoft.Word"))
-        XCTAssertFalse(TextInserter.isChatApp(nil))
-    }
-}

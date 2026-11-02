@@ -87,8 +87,8 @@ final class AppState: ObservableObject {
     @Published var sendAfterDictating: Bool {
         didSet { defaults.set(sendAfterDictating, forKey: Keys.sendAfterDictating) }
     }
-    @Published var matrixEffect: Bool {
-        didSet { defaults.set(matrixEffect, forKey: Keys.matrixEffect) }
+    @Published var inFieldIndicator: Bool {
+        didSet { defaults.set(inFieldIndicator, forKey: Keys.inFieldIndicator) }
     }
     @Published var cleanupEnabled: Bool {
         didSet { defaults.set(cleanupEnabled, forKey: Keys.cleanupEnabled) }
@@ -122,7 +122,7 @@ final class AppState: ObservableObject {
         dictationKey = DictationKey(rawValue: defaults.string(forKey: Keys.dictationKey) ?? "") ?? .fn
         liveTyping = defaults.object(forKey: Keys.liveTyping) as? Bool ?? true
         cleanupEnabled = defaults.object(forKey: Keys.cleanupEnabled) as? Bool ?? true
-        matrixEffect = defaults.object(forKey: Keys.matrixEffect) as? Bool ?? false
+        inFieldIndicator = defaults.object(forKey: Keys.inFieldIndicator) as? Bool ?? true
         sendAfterDictating = defaults.object(forKey: Keys.sendAfterDictating) as? Bool ?? false
         promptForCalls = defaults.object(forKey: Keys.promptForCalls) as? Bool ?? true
         callApps = defaults.stringArray(forKey: Keys.callApps) ?? Self.defaultCallApps
@@ -150,7 +150,7 @@ final class AppState: ObservableObject {
         static let recognitionModel = "recognitionModel"
         static let cleanupEnabled = "cleanupEnabled"
         static let liveTyping = "liveTyping"
-        static let matrixEffect = "matrixEffect"
+        static let inFieldIndicator = "inFieldIndicator"
         static let sendAfterDictating = "sendAfterDictating"
         static let dictationKey = "dictationKey"
         static let promptForCalls = "promptForCalls"
