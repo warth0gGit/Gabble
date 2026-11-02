@@ -78,6 +78,11 @@ struct InFieldIndicatorView: View {
 
     private var isListening: Bool { controller.phase == .listening }
 
+    /// Quiet speech still moves the wave a lot. Pure.
+    nonisolated static func boosted(_ level: Double) -> Double {
+        min(1, (max(0, level)).squareRoot() * 1.4)
+    }
+
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 10) {
@@ -85,9 +90,13 @@ struct InFieldIndicatorView: View {
                     .fill(isListening ? WarbleColor.green : WarbleColor.idle)
                     .frame(width: 8, height: 8)
                     .shadow(color: WarbleColor.glow.opacity(isListening ? 0.8 : 0), radius: 4)
-                WaveformRibbon(level: controller.level, isActive: isListening, strands: 8)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: max(12, geometry.size.height - 10))
+                Spacer(minLength: 0)
+                // Narrower than the box (a wide stretch makes the wave look slow)
+                // and more sensitive to your voice, so it clearly reacts.
+                WaveformRibbon(level: Self.boosted(controller.level), isActive: isListening, strands: 10)
+                    .frame(width: min(260, max(80, geometry.size.width - 120)))
+                    .frame(height: max(14, geometry.size.height - 6))
+                Spacer(minLength: 0)
                 status
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(WarbleColor.idle)
