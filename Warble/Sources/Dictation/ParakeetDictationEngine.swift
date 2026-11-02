@@ -67,7 +67,9 @@ final class ParakeetDictationEngine: DictationSpeechEngine {
         guard isRunning else { return finalText }
         isRunning = false
         stopMicrophone()
-        loopTask?.cancel()
+        // Let the loop finish what it's doing rather than cancelling it: a
+        // phrase it is part-way through reading would otherwise be dropped
+        // (its audio is already taken), cutting words from the middle or end.
         await loopTask?.value
         loopTask = nil
         let rest = audio.snapshot()
