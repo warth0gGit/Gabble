@@ -69,7 +69,7 @@ struct DictationView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Toggle("Send straight away (press Return for me)", isOn: $appState.sendAfterDictating)
-                Text("When you finish, Warble presses Return after putting your words in, so a chat message sends without you checking it. Leave this off for emails and documents.")
+                Text("In Claude, ChatGPT, Slack, Teams, Messages, WhatsApp and Discord, Warble presses Return after putting your words in, so the message sends straight away. Other apps, like Mail and Word, are never affected.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Toggle("Matrix effect while dictating", isOn: $appState.matrixEffect)
