@@ -71,7 +71,7 @@ final class CallSummaryTests: XCTestCase {
         let md = t.markdown
         XCTAssertTrue(md.contains("summary: \"Acme renewal at risk: revised offer by Friday\""))
         XCTAssertTrue(md.contains("summarized_by: Apple Intelligence (on this Mac)"))
-        XCTAssertTrue(md.contains("> [!summary] Summary\n> Acme wants to renew but pushed back on price."))
+        XCTAssertTrue(md.contains("> [!summary] Summary\n> - Acme wants to renew but pushed back on price."))
         XCTAssertTrue(md.contains("## Key points\n- Renewal due 15 December."))
         XCTAssertFalse(md.contains("## Decisions"), "empty sections are left out")
         XCTAssertTrue(md.contains("## Open questions\n- Will finance approve 6%?"))

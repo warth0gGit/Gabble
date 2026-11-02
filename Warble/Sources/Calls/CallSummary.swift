@@ -46,7 +46,7 @@ struct CallSummary: Equatable {
     /// the topics. Sections with nothing in them are left out.
     func markdownLines(people: [String], callDate: Date) -> [String] {
         var lines: [String] = ["> [!summary] Summary"]
-        lines += Self.quoted(overview)
+        lines += Self.bullets(from: overview).map { "> - \($0)" }
         if skippedParts > 0 {
             lines.append(">")
             lines.append("> *Part of this call couldn't be summarized, so check the transcript for anything missing.*")
@@ -93,6 +93,17 @@ struct CallSummary: Equatable {
             }
         }
         return line
+    }
+
+    /// The summary as bullet points, which are easier to skim. Claude writes
+    /// one point per line; otherwise each sentence becomes a point.
+    static func bullets(from overview: String) -> [String] {
+        let text = overview.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return [] }
+        let pieces = text.contains("\n")
+            ? text.components(separatedBy: "\n")
+            : ActionSpotter.sentences(in: text, keepShort: true)
+        return pieces.map(CallSummariser.clean).filter { !$0.isEmpty }
     }
 
     /// Prefixes every line for an Obsidian callout.

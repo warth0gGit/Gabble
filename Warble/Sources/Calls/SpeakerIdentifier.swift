@@ -63,6 +63,40 @@ final class VoiceprintStore: ObservableObject {
     }
 }
 
+/// Decides whether a voice heard on a call is someone Warble already knows.
+/// Strict on purpose: a wrong name is worse than asking "Who's this?".
+/// Pure, unit tested.
+enum VoiceMatcher {
+    /// The furthest (cosine distance) a voice can be from a remembered one to match.
+    static let maxDistance: Float = 0.45
+    /// …and it must be at least this much closer to them than to anyone else on file.
+    static let margin: Float = 0.1
+
+    static func distance(_ a: [Float], _ b: [Float]) -> Float {
+        guard a.count == b.count, !a.isEmpty else { return 2 }
+        var dot: Float = 0, normA: Float = 0, normB: Float = 0
+        for i in a.indices {
+            dot += a[i] * b[i]
+            normA += a[i] * a[i]
+            normB += b[i] * b[i]
+        }
+        guard normA > 0, normB > 0 else { return 2 }
+        return 1 - dot / (normA.squareRoot() * normB.squareRoot())
+    }
+
+    /// The name of the remembered person this voice clearly is, or nil.
+    static func match(_ embedding: [Float], known: [Voiceprint]) -> String? {
+        let ranked = known.map { (name: $0.name, distance: distance(embedding, $0.embedding)) }
+            .sorted { $0.distance < $1.distance }
+        guard let best = ranked.first, best.distance <= maxDistance else { return nil }
+        if let second = ranked.dropFirst().first(where: { $0.name.caseInsensitiveCompare(best.name) != .orderedSame }),
+           second.distance - best.distance < margin {
+            return nil
+        }
+        return best.name
+    }
+}
+
 /// Matches transcript phrases to voices. Pure, unit tested.
 enum SpeakerAssigner {
     /// The voice that overlaps a phrase the most, or nil if none does.
@@ -125,17 +159,24 @@ final class SpeakerIdentifier: @unchecked Sendable {
         self.origin = origin
     }
 
+    /// How different (cosine distance) a voice must be from everyone heard so
+    /// far on this call to count as a new person. FluidAudio's own default
+    /// (0.84) is so loose that colleagues on a Teams call merged into one.
+    static let newVoiceDistance: Float = 0.6
+    /// A voice's fingerprint is only refined with audio this close to it.
+    static let refineDistance: Float = 0.4
+
     /// Downloads the voice models the first time (about 30 MB), then loads them.
-    func prepare(known: [Voiceprint]) async throws {
+    /// People you've named before are not loaded in here: Warble matches them
+    /// itself with a stricter test (VoiceMatcher), because a remembered voice
+    /// inside the voice engine soaked up every similar voice on the call.
+    func prepare() async throws {
         do {
             let models = try await DiarizerModels.downloadIfNeeded()
             let diarizer = DiarizerManager()
             diarizer.initialize(models: models)
-            if !known.isEmpty {
-                diarizer.initializeKnownSpeakers(known.map {
-                    Speaker(id: $0.name, name: $0.name, currentEmbedding: $0.embedding, isPermanent: true)
-                })
-            }
+            diarizer.speakerManager.speakerThreshold = Self.newVoiceDistance
+            diarizer.speakerManager.embeddingThreshold = Self.refineDistance
             lock.lock()
             self.diarizer = diarizer
             if Double(pending.count) >= chunkSeconds * Self.sampleRate { flushLocked() }

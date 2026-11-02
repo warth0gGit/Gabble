@@ -42,7 +42,7 @@ final class CallRecorder {
 
     private let app: CallApp
 
-    func start(hints: [String], knownVoices: [Voiceprint] = []) async throws {
+    func start(hints: [String]) async throws {
         speakers.onSegments = { [weak self] segments in self?.onVoices?(segments) }
         micTranscriber.onFinal = { [weak self] text in self?.add(Self.meLabel, text) }
         micTranscriber.onVolatile = { [weak self] text in self?.liveMe = text; self?.publish() }
@@ -68,7 +68,7 @@ final class CallRecorder {
 
         // Voice recognition is a bonus: if its models can't load, the call is
         // still transcribed as Me and Others.
-        Task.detached { try? await speakers.prepare(known: knownVoices) }
+        Task.detached { try? await speakers.prepare() }
 
         // You, on the same microphone the call app uses. MicrophoneCapture keeps
         // recording when AirPods connect, disconnect or switch mode mid-call.

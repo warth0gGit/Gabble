@@ -81,6 +81,9 @@ final class CallController: ObservableObject {
     private var voiceSegments: [VoiceSegment] = []
     private var namesThisCall: [String: String] = [:]
     private var skippedVoices: Set<String> = []
+    /// Voices already compared with the people Warble knows (matched or not).
+    private var voicesChecked: Set<String> = []
+    private var voicesBeingChecked: Set<String> = []
     /// How long someone must talk before Warble asks who they are.
     private let askAfterSeconds: TimeInterval = 5
 
@@ -213,6 +216,8 @@ final class CallController: ObservableObject {
         voiceSegments = []
         namesThisCall = [:]
         skippedVoices = []
+        voicesChecked = []
+        voicesBeingChecked = []
         askingWho = nil
         panelMinimized = false
         savedStats = nil
@@ -227,7 +232,7 @@ final class CallController: ObservableObject {
             ParakeetStatus.shared.warmUp()
         }
         do {
-            try await recorder.start(hints: lexicon.recognitionHints, knownVoices: voices.voices)
+            try await recorder.start(hints: lexicon.recognitionHints)
             startSpeakerMeter()
         } catch {
             lastError = Self.friendly(error)
@@ -304,7 +309,8 @@ final class CallController: ObservableObject {
         self.recorder = nil
         stopSpeakerMeter()
         let heard = VoiceBox(voiceSegments)
-        let names = namesThisCall
+        var names = namesThisCall
+        let checked = voicesChecked
         recorder.onVoices = { segments in heard.segments.append(contentsOf: segments) }
         recorder.onUpdate = nil
         let callMeeting = meeting
@@ -344,6 +350,19 @@ final class CallController: ObservableObject {
         }
         if savingRereads { await showStep(.tidying, for: token) }
         let voicesHeard = heard.segments
+        // Voices that only became clear at the end of the call get the same strict check.
+        let talk = SpeakerAssigner.talkTime(voicesHeard)
+        let known = voices.voices
+        if !known.isEmpty {
+            for id in Set(voicesHeard.map(\.speakerID)) where names[id] == nil && !checked.contains(id) && (talk[id] ?? 0) >= 3 {
+                if let embedding = await recorder.speakers.embedding(for: id),
+                   let name = VoiceMatcher.match(embedding, known: known) {
+                    names[id] = name
+                }
+            }
+        }
+        // Your mic picks up the others through your speakers; drop those echoes.
+        finished.segments = EchoFilter.removeEchoes(from: finished.segments)
         finished.relabel { [self] segment in label(for: segment, voices: voicesHeard, names: names) }
         // Word List fixes, then the light tidy-up (on every call, however short).
         finished.segments = finished.segments.compactMap { segment in
@@ -450,11 +469,36 @@ final class CallController: ObservableObject {
 
     private func heard(_ segments: [VoiceSegment]) {
         voiceSegments.append(contentsOf: segments)
+        checkNewVoicesAgainstKnownPeople()
         askAboutNextUnknownVoice()
     }
 
     private func isKnown(_ speakerID: String) -> Bool {
-        namesThisCall[speakerID] != nil || voices.voices.contains { $0.name == speakerID }
+        namesThisCall[speakerID] != nil
+    }
+
+    /// Once a new voice has said enough, compares it with the people Warble
+    /// knows. Only a clear match is named; anyone else gets "Who's this?".
+    private func checkNewVoicesAgainstKnownPeople() {
+        guard let speakers = recorder?.speakers else { return }
+        let talk = SpeakerAssigner.talkTime(voiceSegments)
+        for id in Set(voiceSegments.map(\.speakerID))
+        where !voicesChecked.contains(id) && !voicesBeingChecked.contains(id) && (talk[id] ?? 0) >= askAfterSeconds {
+            guard !voices.voices.isEmpty else { voicesChecked.insert(id); continue }
+            voicesBeingChecked.insert(id)
+            let known = voices.voices
+            Task { [weak self] in
+                let embedding = await speakers.embedding(for: id)
+                guard let self else { return }
+                self.voicesBeingChecked.remove(id)
+                self.voicesChecked.insert(id)
+                if let embedding, let name = VoiceMatcher.match(embedding, known: known), self.namesThisCall[id] == nil {
+                    self.namesThisCall[id] = name
+                    self.refreshLiveSpeakers()
+                }
+                self.askAboutNextUnknownVoice()
+            }
+        }
     }
 
     private func askAboutNextUnknownVoice() {
@@ -462,7 +506,7 @@ final class CallController: ObservableObject {
         let talk = SpeakerAssigner.talkTime(voiceSegments)
         let firstHeard = voiceSegments.map(\.speakerID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         guard let id = firstHeard.first(where: {
-            !isKnown($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
+            !isKnown($0) && voicesChecked.contains($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
         }) else { return }
         askingWho = UnknownVoice(speakerID: id, sample: sample(for: id))
     }
@@ -516,11 +560,9 @@ final class CallController: ObservableObject {
     /// A voice's name: given on that call, remembered from earlier calls, or "Speaker 2".
     private func voiceName(_ id: String, voices heard: [VoiceSegment], names: [String: String]) -> String {
         if let name = names[id] { return name }
-        if voices.voices.contains(where: { $0.name == id }) { return id }
-        let known = Set(voices.voices.map(\.name))
         var unknown: [String] = []
         for speaker in heard.map(\.speakerID)
-        where !unknown.contains(speaker) && names[speaker] == nil && !known.contains(speaker) {
+        where !unknown.contains(speaker) && names[speaker] == nil {
             unknown.append(speaker)
         }
         let number = (unknown.firstIndex(of: id) ?? 0) + 2

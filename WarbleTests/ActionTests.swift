@@ -99,6 +99,17 @@ final class ClaudeSummariserTests: XCTestCase {
         XCTAssertEqual(summary?.writer, ClaudeSummariser.writer)
     }
 
+    func testSummaryComesAsBulletPoints() {
+        let reply = #"{"headline": "Team sync", "summary": ["- Jordan is out sick.", "MWC plan due within 24 hours."], "actionItems": []}"#
+        let summary = ClaudeSummariser.parse(reply)
+        XCTAssertEqual(summary?.overview, "Jordan is out sick.\nMWC plan due within 24 hours.")
+        let lines = summary!.markdownLines(people: [], callDate: start)
+        XCTAssertEqual(Array(lines.prefix(3)), ["> [!summary] Summary", "> - Jordan is out sick.", "> - MWC plan due within 24 hours."])
+        // Apple Intelligence writes sentences: each becomes a point.
+        XCTAssertEqual(CallSummary.bullets(from: "Acme wants to renew. They pushed back on price."),
+                       ["Acme wants to renew.", "They pushed back on price."])
+    }
+
     func testErrorsAndNonsenseGiveNoSummary() {
         XCTAssertNil(ClaudeSummariser.parse(#"{"type":"result","is_error":true,"result":"Invalid API key"}"#))
         XCTAssertNil(ClaudeSummariser.parse("Sorry, I can't help with that."))

@@ -139,6 +139,7 @@ enum ClaudeSummariser {
         to go and get…") and ones split across lines. owner is "Me", a speaker's name exactly as written, a person \
         named in the transcript, or "" if unclear. task starts with a verb and is specific. due is the date as \
         YYYY-MM-DD when a specific day can be worked out from the call date, otherwise the words used, or "".
+        - summary: short, skimmable bullet points, one idea each, without bullet symbols.
         - keyPoints: specific, complete sentences with the facts that matter, not one-word topics.
         - decisions: only things actually agreed or decided. Not problems, observations or plans for the future.
         - openQuestions: only real questions left unanswered.
@@ -150,7 +151,8 @@ enum ClaudeSummariser {
 
         Reply with only this JSON object and nothing else:
         {"headline": "one line under 20 words: what the call was about and its main outcome", \
-        "overview": "two to four plain sentences", "keyPoints": [], "decisions": [], \
+        "summary": ["3 to 6 short bullet points: what the call was about, what matters most, and the outcome"], \
+        "keyPoints": [], "decisions": [], \
         "actionItems": [{"owner": "", "task": "", "due": ""}], "openQuestions": [], \
         "topics": [{"start": "00:00", "title": ""}], "corrections": [{"heard": "", "meant": ""}]}
 
@@ -169,6 +171,7 @@ enum ClaudeSummariser {
         struct Fix: Decodable { var heard: String?; var meant: String? }
         var headline: String?
         var overview: String?
+        var summary: [String]?
         var keyPoints: [String]?
         var decisions: [String]?
         var actionItems: [Action]?
@@ -217,7 +220,7 @@ enum ClaudeSummariser {
         }
         let summary = CallSummary(
             headline: clean(notes.headline ?? ""),
-            overview: clean(notes.overview ?? ""),
+            overview: notes.summary.map { CallSummariser.cleanList($0).joined(separator: "\n") } ?? clean(notes.overview ?? ""),
             keyPoints: list(notes.keyPoints),
             decisions: list(notes.decisions),
             actionItems: actions,
