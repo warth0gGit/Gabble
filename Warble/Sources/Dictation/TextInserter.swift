@@ -319,8 +319,13 @@ enum TextInserter {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             let source = CGEventSource(stateID: .combinedSessionState)
             let key = CGKeyCode(kVK_Return)
-            CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)?.post(tap: .cghidEventTap)
-            CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)?.post(tap: .cghidEventTap)
+            // A plain Return: no Fn, Shift or other key still counted as held
+            // (Shift-Return adds a new line instead of sending).
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: down)
+                event?.flags = []
+                event?.post(tap: .cghidEventTap)
+            }
         }
     }
 

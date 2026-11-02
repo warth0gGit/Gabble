@@ -378,3 +378,12 @@ final class LongPasteTests: XCTestCase {
         XCTAssertTrue(TextInserter.keepsOnClipboard(String(repeating: "word ", count: 300)))
     }
 }
+
+final class LeakedFormatTests: XCTestCase {
+    func testLeakedAnswerFormatIsRejected() {
+        XCTAssertNil(SmartCleanup.validated("If there's no text in the response format in json.name: CleanedDictation.schema: {",
+                                            original: "if there's no text"))
+        XCTAssertEqual(SmartCleanup.validated("Send the schema: it's ready.", original: "send the schema: it's ready"),
+                       "Send the schema: it's ready.")
+    }
+}

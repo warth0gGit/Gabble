@@ -306,7 +306,7 @@ final class DictationController: ObservableObject {
             let replaced = TextInserter.replaceTyped(typed, with: cleaned)
             let inField = replaced ? cleaned : typed
             lastResult = inField
-            if appState.sendAfterDictating { TextInserter.pressReturn(after: 0.2) }
+            if appState.sendAfterDictating { TextInserter.pressReturn(after: 0.6) }
             watchForCorrections(inField)
             return
         }
@@ -402,7 +402,7 @@ final class DictationController: ObservableObject {
         TextInserter.insert(text)
         if appState.sendAfterDictating {
             // Give the app time to take the paste first; a long one takes longer.
-            TextInserter.pressReturn(after: TextInserter.keepsOnClipboard(text) ? 1.5 : 0.35)
+            TextInserter.pressReturn(after: TextInserter.keepsOnClipboard(text) ? 2.0 : 0.8)
         }
         watchForCorrections(text)
     }

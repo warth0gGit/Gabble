@@ -202,6 +202,8 @@ enum SmartCleanup {
 
     /// Rejects answers that are clearly not a cleaned-up version of the input
     /// (for example, the model replying to a question instead of tidying it).
+    static let leakMarkers = ["cleaneddictation", "schema:", "response format", "\"type\":", "\"properties\""]
+
     static func validated(_ output: String, original: String) -> String? {
         var result = output.trimmingCharacters(in: .whitespacesAndNewlines)
         result = strippingChatter(result, original: original)
@@ -209,6 +211,14 @@ enum SmartCleanup {
             result = String(result.dropFirst().dropLast())
         }
         guard !result.isEmpty else { return nil }
+        // Apple's model sometimes leaks its answer format ("response format in
+        // json. name: CleanedDictation. schema: {") into the text. Use the
+        // basic tidy-up instead of typing that.
+        let lowered = result.lowercased()
+        let originalLowered = original.lowercased()
+        for marker in leakMarkers where lowered.contains(marker) && !originalLowered.contains(marker) {
+            return nil
+        }
         let ratio = Double(result.count) / Double(max(original.count, 1))
         if original.count > 40, ratio < 0.4 || ratio > 1.6 { return nil }
         if original.count <= 40, result.count > original.count + 40 { return nil }
