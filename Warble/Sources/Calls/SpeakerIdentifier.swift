@@ -97,8 +97,13 @@ enum VoiceMatcher {
     }
 
     /// How far a voice can drift from someone already named on this call and
-    /// still be them. Looser than for remembered people: same call, same mic.
-    static let sameCallDistance: Float = 0.6
+    /// still be them. The voice engine has already judged this voice to be
+    /// new (further than newVoiceDistance from everyone), so only a clearly
+    /// closer match overrules it; a looser value folded a fifth person on a
+    /// big call into one of the first four.
+    static let sameCallDistance: Float = 0.45
+    /// The nearest person on the call must beat the next nearest by this much.
+    static let sameCallMargin: Float = 0.1
 
     /// Mid-call, the voice engine sometimes starts a new voice for someone
     /// already on the call. Prefer the people on this call, and only name
@@ -106,10 +111,14 @@ enum VoiceMatcher {
     static func matchInCall(_ embedding: [Float], onCall: [Voiceprint], saved: [Voiceprint]) -> String? {
         let present = Set(onCall.map { $0.name.lowercased() })
         let others = saved.filter { !present.contains($0.name.lowercased()) }
-        let nearestOnCall = onCall.map { (name: $0.name, distance: distance(embedding, $0.embedding)) }
-            .min { $0.distance < $1.distance }
+        let rankedOnCall = onCall.map { (name: $0.name, distance: distance(embedding, $0.embedding)) }
+            .sorted { $0.distance < $1.distance }
+        let nearestOnCall = rankedOnCall.first
+        let runnerUp = rankedOnCall.dropFirst()
+            .first { $0.name.caseInsensitiveCompare(nearestOnCall?.name ?? "") != .orderedSame }
+        let clearWinner = runnerUp.map { $0.distance - (nearestOnCall?.distance ?? 0) >= sameCallMargin } ?? true
         let nearestOther = others.map { distance(embedding, $0.embedding) }.min() ?? 2
-        if let nearestOnCall, nearestOnCall.distance <= sameCallDistance,
+        if let nearestOnCall, nearestOnCall.distance <= sameCallDistance, clearWinner,
            !(nearestOther <= maxDistance && nearestOther + 0.15 < nearestOnCall.distance) {
             return nearestOnCall.name
         }

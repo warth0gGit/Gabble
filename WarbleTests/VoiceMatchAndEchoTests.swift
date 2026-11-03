@@ -42,6 +42,16 @@ final class VoiceMatcherTests: XCTestCase {
         // Nobody on the call yet: the usual rules.
         XCTAssertEqual(VoiceMatcher.matchInCall(voice(0), onCall: [], saved: [shadee]), "Shadee Young")
     }
+
+    func testAFifthPersonOnABigCallIsNotFoldedIntoTheFirstFour() {
+        let onCall = (1...4).map { Voiceprint(name: "Person \($0)", embedding: voice($0)) }
+        // Someone new who only sounds a bit like Person 1: ask, don't merge.
+        XCTAssertNil(VoiceMatcher.matchInCall(voice(1, blend: 5, amount: 1.8), onCall: onCall, saved: []))
+        // Sits between two people on the call: too close to call.
+        XCTAssertNil(VoiceMatcher.matchInCall(voice(1, blend: 2, amount: 0.9), onCall: onCall, saved: []))
+        // Person 1 again, slightly different: still them.
+        XCTAssertEqual(VoiceMatcher.matchInCall(voice(1, blend: 5, amount: 0.3), onCall: onCall, saved: []), "Person 1")
+    }
 }
 
 final class EchoFilterTests: XCTestCase {
