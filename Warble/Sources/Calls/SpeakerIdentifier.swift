@@ -190,10 +190,13 @@ final class SpeakerIdentifier: @unchecked Sendable {
 
     /// How different (cosine distance) a voice must be from everyone heard so
     /// far on this call to count as a new person. FluidAudio's own default
-    /// (0.84) is so loose that colleagues on a Teams call merged into one.
-    static let newVoiceDistance: Float = 0.6
+    /// (0.84) is so loose that colleagues on a Teams call merged into one, and
+    /// at 0.6 a man talking for minutes was taken for a woman already named
+    /// (and her fingerprint drifted to his voice). Splitting one person into
+    /// two is fixable (matchInCall rejoins them, or you rename); a merge isn't.
+    static let newVoiceDistance: Float = 0.5
     /// A voice's fingerprint is only refined with audio this close to it.
-    static let refineDistance: Float = 0.4
+    static let refineDistance: Float = 0.3
 
     /// Downloads the voice models the first time (about 30 MB), then loads them.
     /// People you've named before are not loaded in here: Warble matches them
