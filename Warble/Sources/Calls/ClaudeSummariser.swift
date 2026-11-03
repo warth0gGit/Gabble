@@ -18,7 +18,7 @@ enum ClaudeSummariser {
     static let writer = "Claude (via Claude Code)"
 
     /// Gives up after this long. Claude usually answers in well under a minute.
-    static let timeout: Double = 300
+    static let timeout: Double = 540
 
     // MARK: - Finding Claude Code
 
