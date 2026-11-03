@@ -186,10 +186,7 @@ struct CallSummary: Equatable {
             return items.filter { seen.insert($0.lowercased()).inserted }
         }
         var actions: [ActionItem] = []
-        for item in parts.flatMap(\.actionItems)
-        where !actions.contains(where: { $0.owner == item.owner && $0.task.lowercased() == item.task.lowercased() }) {
-            actions.append(item)
-        }
+        for item in parts.flatMap(\.actionItems) { CallSummariser.add(item, to: &actions) }
         return CallSummary(
             headline: first.headline,
             overview: parts.map(\.overview).filter { !$0.isEmpty }.joined(separator: " "),

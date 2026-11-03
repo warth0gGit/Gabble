@@ -55,6 +55,11 @@ final class ActionSpotterTests: XCTestCase {
         CallSummariser.add(.init(owner: "Me", task: "get an agreement from the chief executive", due: "Wednesday"), to: &actions)
         CallSummariser.add(.init(owner: "Shadee", task: "Leave on time"), to: &actions)
         XCTAssertEqual(actions.map(\.task), ["Get agreement from the chief executive", "Leave on time"])
+        // The same task with a full stop, and fragments, are left out.
+        CallSummariser.add(.init(owner: "Shadee", task: "Leave on time."), to: &actions)
+        CallSummariser.add(.init(owner: "Me", task: "tell"), to: &actions)
+        CallSummariser.add(.init(owner: "Me", task: "put"), to: &actions)
+        XCTAssertEqual(actions.count, 2)
     }
 
     func testBritishDeadlines() {

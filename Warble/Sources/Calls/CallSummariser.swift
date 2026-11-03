@@ -200,6 +200,8 @@ enum CallSummariser {
     /// Adds an action unless the same task is already there.
     static func add(_ item: CallSummary.ActionItem, to actions: inout [CallSummary.ActionItem]) {
         let words = ActionSpotter.contentWords(item.task)
+        // Fragments like "tell", "put" or "talk to her" aren't tasks anyone can act on.
+        guard words.count >= 2 else { return }
         let repeated = actions.contains { existing in
             let shared = words.intersection(ActionSpotter.contentWords(existing.task)).count
             let smaller = min(words.count, ActionSpotter.contentWords(existing.task).count)
@@ -290,11 +292,9 @@ enum CallSummariser {
         result.skippedParts = fallback.skippedParts
         if result.overview.isEmpty { result.overview = fallback.overview }
         // The model sometimes drops tasks when merging; keep any it lost.
-        for item in fallback.actionItems where !result.actionItems.contains(where: {
-            $0.task.lowercased() == item.task.lowercased()
-        }) {
-            result.actionItems.append(item)
-        }
+        let merged = result.actionItems
+        result.actionItems = []
+        for item in merged + fallback.actionItems { add(item, to: &result.actionItems) }
         return result
     }
 
