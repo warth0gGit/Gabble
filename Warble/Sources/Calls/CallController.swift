@@ -308,13 +308,22 @@ final class CallController: ObservableObject {
             }
             shown = order.filter { keep.contains($0) }
         }
+        // One person the voice engine split in two shows as one chip.
+        var seenNames = Set<String>()
+        shown = shown.filter { id in
+            id == asking || name(id).hasPrefix("Speaker ") || seenNames.insert(name(id).lowercased()).inserted
+        }
+        let latestName = latest.map(name)
         let short = chipNames(order.map(name))
         for id in shown {
             list.append(LiveSpeaker(id: id, name: id == asking ? "New voice" : short[name(id)] ?? name(id),
-                                    isNew: id == asking, isSpeaking: othersTalking && id == latest))
+                                    isNew: id == asking,
+                                    isSpeaking: othersTalking && (id == latest || (id != asking && name(id) == latestName && latest != asking))))
         }
-        if order.count > shown.count {
-            list.append(LiveSpeaker(id: "more", name: "+\(order.count - shown.count)"))
+        let hidden = Set(order.filter { !shown.contains($0) }.map { name($0).lowercased() })
+            .subtracting(shown.map { name($0).lowercased() })
+        if !hidden.isEmpty {
+            list.append(LiveSpeaker(id: "more", name: "+\(hidden.count)"))
         }
         return list
     }
@@ -592,6 +601,13 @@ final class CallController: ObservableObject {
             }
             self?.askAboutNextUnknownVoice()
         }
+    }
+
+    /// While "Who's this?" is showing, clicking someone's chip says the new
+    /// voice is them: the two are joined under that name.
+    func joinAskingVoice(to speakerID: String) {
+        guard let name = namesThisCall[speakerID] else { return }
+        nameVoice(name)
     }
 
     /// Tapping a person's chip: Warble got them wrong, so ask "Who's this?"

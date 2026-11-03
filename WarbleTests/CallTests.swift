@@ -129,6 +129,15 @@ final class LiveSpeakerTests: XCTestCase {
         XCTAssertEqual(list.map(\.isSpeaking), [false, true, false])
     }
 
+    func testOnePersonSplitInTwoShowsOneChip() {
+        let voices = [voice("S1", 0, 5), voice("S2", 5, 8), voice("S3", 8, 12)]
+        let names = ["S1": "Alex Wylie", "S2": "Emily Stone", "S3": "Alex Wylie"]
+        let list = CallController.liveSpeakers(meTalking: false, meLevel: 0, meThreshold: 0.02, othersTalking: true,
+                                               voices: voices, asking: nil, name: { names[$0]! })
+        XCTAssertEqual(list.map(\.name), ["You", "Alex", "Emily"])
+        XCTAssertEqual(list.map(\.isSpeaking), [false, true, false])
+    }
+
     func testVoiceBeingAskedAboutIsNew() {
         let voices = [voice("S1", 0, 1)]
         let list = CallController.liveSpeakers(meTalking: false, meLevel: 0, meThreshold: 0.02, othersTalking: false,

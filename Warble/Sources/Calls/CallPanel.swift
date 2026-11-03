@@ -231,9 +231,12 @@ struct CallPanelView: View {
                 if speaker.isYou || ["others", "more"].contains(speaker.id) || speaker.isNew {
                     SpeakerChip(speaker: speaker)
                 } else {
-                    Button { calls.relabelVoice(speaker.id) } label: { SpeakerChip(speaker: speaker) }
+                    Button {
+                        if calls.askingWho != nil { calls.joinAskingVoice(to: speaker.id) }
+                        else { calls.relabelVoice(speaker.id) }
+                    } label: { SpeakerChip(speaker: speaker) }
                         .buttonStyle(.plain)
-                        .help("Wrong person? Click to rename")
+                        .help(calls.askingWho != nil ? "It's them: click to join" : "Wrong person? Click to rename")
                 }
             }
         }
@@ -277,6 +280,9 @@ struct CallPanelView: View {
                 .lineLimit(2)
                 .truncationMode(.head)
         }
+        Text("Already on the call? Click their name above.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         TextField("Type a name, or press Esc to skip", text: $whoName)
             .textFieldStyle(.roundedBorder)
             .onSubmit(saveName)
