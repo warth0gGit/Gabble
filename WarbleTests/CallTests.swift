@@ -26,6 +26,9 @@ final class CallTranscriptTests: XCTestCase {
         XCTAssertTrue(md.contains("speakers: [Others]"))
         XCTAssertTrue(md.contains("**Others** (01:05): Morning."))
         XCTAssertTrue(t.fileName.hasSuffix(" Teams call.md"))
+        t.customName = "  Orchestrate / sandbox review "
+        XCTAssertTrue(t.fileName.hasSuffix(" Orchestrate - sandbox review.md"))
+        XCTAssertTrue(t.title.hasPrefix("Orchestrate / sandbox review, "))
     }
 
     func testDatesAreInLocalTimeNotUTC() {

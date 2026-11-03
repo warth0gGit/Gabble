@@ -17,6 +17,8 @@ struct CallTranscript: Equatable {
     var category: String = "Unfiled"
     /// The calendar meeting this call was, if Warble could tell.
     var meeting: MeetingInfo?
+    /// A name you gave the call yourself; the date and time are added for you.
+    var customName: String?
     /// The friendly summary at the top of the note, once Apple Intelligence has written it.
     var summary: CallSummaryState = .none
 
@@ -102,8 +104,16 @@ struct CallTranscript: Equatable {
         }
     }
 
+    /// Your own name for the call, else the calendar meeting's title.
+    private var givenName: String? {
+        let own = customName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !own.isEmpty { return own }
+        if let name = meeting?.title, !name.isEmpty { return name }
+        return nil
+    }
+
     var title: String {
-        if let name = meeting?.title, !name.isEmpty {
+        if let name = givenName {
             return "\(name), \(Self.titleFormatter.string(from: started))"
         }
         return "\(shortAppName) call \(Self.titleFormatter.string(from: started))"
@@ -115,7 +125,7 @@ struct CallTranscript: Equatable {
 
     /// File name, safe for every file system, e.g. "2026-10-31 1400 Teams call.md".
     var fileName: String {
-        let name = meeting.map { FolderName.fileName($0.title) }.flatMap { $0.isEmpty ? nil : $0 }
+        let name = givenName.map { FolderName.fileName($0) }.flatMap { $0.isEmpty ? nil : $0 }
             ?? "\(shortAppName) call"
         return "\(Self.fileFormatter.string(from: started)) \(String(name.prefix(80))).md"
     }

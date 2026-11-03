@@ -112,6 +112,7 @@ struct CallPanelView: View {
     let sizeRelay: SizeRelay
     @State private var whoName = ""
     @State private var newFolder = ""
+    @State private var callName = ""
 
     var body: some View {
         Group {
@@ -421,6 +422,12 @@ struct CallPanelView: View {
     @ViewBuilder
     private var filingChoice: some View {
         Divider()
+        TextField("Name this call (optional), e.g. Orchestrate sandbox review", text: $callName)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit(applyCallName)
+        Text("The date and time are added for you.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         Label("Where should this call go?", systemImage: "folder")
             .font(.headline)
         if let title = calls.transcript?.meeting?.title, !title.isEmpty {
@@ -431,6 +438,7 @@ struct CallPanelView: View {
         }
         ForEach(calls.filingSuggestions, id: \.folder) { suggestion in
             Button {
+                applyCallName()
                 calls.file(into: suggestion.folder)
             } label: {
                 HStack {
@@ -450,7 +458,7 @@ struct CallPanelView: View {
             Button("File", action: fileInNewFolder)
                 .disabled(newFolder.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        Button("Leave in Unfiled") { calls.leaveUnfiled() }
+        Button("Leave in Unfiled") { applyCallName(); calls.leaveUnfiled() }
             .buttonStyle(.plain)
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -459,8 +467,14 @@ struct CallPanelView: View {
     private func fileInNewFolder() {
         let folder = newFolder.trimmingCharacters(in: .whitespaces)
         guard !folder.isEmpty else { return }
+        applyCallName()
         calls.file(into: folder)
         newFolder = ""
+    }
+
+    private func applyCallName() {
+        calls.renameCall(callName)
+        callName = ""
     }
 
     private func saveName() {

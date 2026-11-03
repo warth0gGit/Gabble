@@ -691,6 +691,25 @@ final class CallController: ObservableObject {
 
     // MARK: - Filing
 
+    /// Gives the last saved call your own name ("Orchestrate sandbox review");
+    /// the note becomes "2026-11-03 1229 Orchestrate sandbox review.md".
+    func renameCall(_ name: String) {
+        guard var saved = lastSaved else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != saved.transcript.customName else { return }
+        saved.transcript.customName = trimmed
+        do {
+            let url = try save(saved.transcript)
+            if url != saved.url { try? FileManager.default.removeItem(at: saved.url) }
+            lastSaved = (url, saved.transcript, saved.features)
+            transcript = saved.transcript
+            state = .saved(url)
+        } catch {
+            lastError = "Couldn't rename the transcript: \(error.localizedDescription)"
+            showErrorBriefly()
+        }
+    }
+
     /// Moves the last saved call into `folder` (a path under Calls, e.g.
     /// "1-1s/Sarah Jones") and remembers the choice for next time.
     func file(into folder: String) {
