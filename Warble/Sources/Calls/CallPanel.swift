@@ -256,6 +256,18 @@ struct CallPanelView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        // Make clear which voice this is about, so a later speaker isn't named by mistake.
+        let askingTalking = calls.liveSpeakers.contains { $0.isNew && $0.isSpeaking }
+        let someoneElseTalking = calls.liveSpeakers.contains { !$0.isNew && !$0.isYou && $0.isSpeaking }
+        if askingTalking {
+            Text("This voice is talking now")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(WarbleColor.glow)
+        } else if someoneElseTalking {
+            Text("Not the person talking now. This voice said:")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(CallPanelColor.amber)
+        }
         if !sample.isEmpty {
             Text("\u{201C}\(sample)\u{201D}")
                 .font(.caption)
