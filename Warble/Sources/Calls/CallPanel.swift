@@ -226,7 +226,15 @@ struct CallPanelView: View {
             .help("Stop transcribing and save the transcript")
         }
         FlowLayout(spacing: 6) {
-            ForEach(calls.liveSpeakers) { SpeakerChip(speaker: $0) }
+            ForEach(calls.liveSpeakers) { speaker in
+                if speaker.isYou || ["others", "more"].contains(speaker.id) || speaker.isNew {
+                    SpeakerChip(speaker: speaker)
+                } else {
+                    Button { calls.relabelVoice(speaker.id) } label: { SpeakerChip(speaker: speaker) }
+                        .buttonStyle(.plain)
+                        .help("Wrong person? Click to rename")
+                }
+            }
         }
         if let asking = calls.askingWho {
             whosThis(sample: asking.sample)

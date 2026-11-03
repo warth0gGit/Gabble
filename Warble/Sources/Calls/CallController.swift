@@ -583,6 +583,15 @@ final class CallController: ObservableObject {
         }
     }
 
+    /// Tapping a person's chip: Warble got them wrong, so ask "Who's this?"
+    /// for that voice again. The new name replaces the old one on this call.
+    func relabelVoice(_ speakerID: String) {
+        guard isRecording, !["you", "others", "more"].contains(speakerID) else { return }
+        skippedVoices.remove(speakerID)
+        askingWho = UnknownVoice(speakerID: speakerID, sample: sample(for: speakerID))
+        refreshLiveSpeakers()
+    }
+
     func skipVoice() {
         guard let asking = askingWho else { return }
         skippedVoices.insert(asking.speakerID)
