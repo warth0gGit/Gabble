@@ -85,10 +85,10 @@ enum VoiceMatcher {
     }
 
     /// The name of the remembered person this voice clearly is, or nil.
-    static func match(_ embedding: [Float], known: [Voiceprint]) -> String? {
+    static func match(_ embedding: [Float], known: [Voiceprint], within limit: Float = maxDistance) -> String? {
         let ranked = known.map { (name: $0.name, distance: distance(embedding, $0.embedding)) }
             .sorted { $0.distance < $1.distance }
-        guard let best = ranked.first, best.distance <= maxDistance else { return nil }
+        guard let best = ranked.first, best.distance <= limit else { return nil }
         if let second = ranked.dropFirst().first(where: { $0.name.caseInsensitiveCompare(best.name) != .orderedSame }),
            second.distance - best.distance < margin {
             return nil
@@ -102,6 +102,9 @@ enum VoiceMatcher {
     /// closer match overrules it; a looser value folded a fifth person on a
     /// big call into one of the first four.
     static let sameCallDistance: Float = 0.45
+    /// Naming someone from an earlier call only after this call has ended,
+    /// when you never saw them on the card, needs a very close match.
+    static let afterCallDistance: Float = 0.3
     /// The nearest person on the call must beat the next nearest by this much.
     static let sameCallMargin: Float = 0.1
 

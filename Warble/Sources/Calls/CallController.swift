@@ -391,10 +391,21 @@ final class CallController: ObservableObject {
         // Voices that only became clear at the end of the call get the same strict check.
         let talk = SpeakerAssigner.talkTime(voicesHeard)
         let known = voices.voices
-        if !known.isEmpty {
+        if !known.isEmpty || !names.isEmpty {
+            // The people named on this call, so a leftover piece of their voice
+            // joins them instead of being matched to someone from another call.
+            var onCall: [Voiceprint] = []
+            for (otherID, name) in names {
+                if let other = await recorder.speakers.embedding(for: otherID) {
+                    onCall.append(Voiceprint(name: name, embedding: other))
+                }
+            }
             for id in Set(voicesHeard.map(\.speakerID)) where names[id] == nil && !checked.contains(id) && (talk[id] ?? 0) >= 3 {
-                if let embedding = await recorder.speakers.embedding(for: id),
-                   let name = VoiceMatcher.match(embedding, known: known) {
+                guard let embedding = await recorder.speakers.embedding(for: id) else { continue }
+                if let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: []) {
+                    names[id] = name
+                } else if let name = VoiceMatcher.match(embedding, known: known, within: VoiceMatcher.afterCallDistance) {
+                    // Nobody saw this name during the call, so only a very close match counts.
                     names[id] = name
                 }
             }
