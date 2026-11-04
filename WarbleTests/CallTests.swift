@@ -101,7 +101,7 @@ final class VoiceprintStoreTests: XCTestCase {
         store.remember(name: " Sarah ", embedding: [0.1, 0.2])
         store.remember(name: "sarah", embedding: [0.3, 0.4])
         XCTAssertEqual(store.voices.count, 1)
-        XCTAssertEqual(store.voices[0].embedding, [0.3, 0.4])
+        XCTAssertEqual(store.voices[0].prints, [[0.1, 0.2], [0.3, 0.4]], "added to, not replaced")
         XCTAssertEqual(VoiceprintStore(fileURL: url).voices.map(\.name), ["Sarah"])
         store.forget(store.voices[0])
         XCTAssertTrue(VoiceprintStore(fileURL: url).voices.isEmpty)
