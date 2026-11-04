@@ -31,6 +31,14 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 }
 
 struct MainWindow: View {
+    /// "Version 1.0 (build 39)", from the app's own Info.plist.
+    static var versionText: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        return "Version \(version) (build \(build))"
+    }
+
     @EnvironmentObject private var permissions: PermissionsManager
     @State private var selection: SettingsSection? = .home
 
@@ -51,6 +59,14 @@ struct MainWindow: View {
                 Label(section.title, systemImage: section.icon)
                     .badge(section == .permissions && !permissions.allRequiredGranted ? Text("!") : nil)
                     .tag(section)
+            }
+            .safeAreaInset(edge: .bottom) {
+                Text(Self.versionText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
