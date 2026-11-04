@@ -176,6 +176,25 @@ struct VoiceSplitter {
         return Self.unit(anchor.sum)
     }
 
+    /// How a voice sounded over the whole call (every clear stretch of it,
+    /// weighted by length), once it has said at least `seconds`. Steadier
+    /// than the first few seconds, so it's what Warble learns for next time.
+    func callPrint(for voice: String, atLeast seconds: TimeInterval = 15) -> [Float]? {
+        var sum: [Float] = []
+        var total: TimeInterval = 0
+        for s in segments where s.speakerID == voice && !s.embedding.isEmpty {
+            let length = s.end - s.start
+            guard length >= Self.judgeSeconds else { continue }
+            let unit = Self.unit(s.embedding)
+            if sum.isEmpty { sum = [Float](repeating: 0, count: unit.count) }
+            guard unit.count == sum.count else { continue }
+            for i in sum.indices { sum[i] += unit[i] * Float(length) }
+            total += length
+        }
+        guard total >= seconds else { return nil }
+        return Self.unit(sum)
+    }
+
     // MARK: - Maths
 
     static func distance(_ a: [Float], _ b: [Float]) -> Float { VoiceMatcher.distance(a, b) }

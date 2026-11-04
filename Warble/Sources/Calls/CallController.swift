@@ -91,6 +91,11 @@ final class CallController: ObservableObject {
     /// Voices already compared with the people Warble knows (matched or not).
     private var voicesChecked: Set<String> = []
     private var voicesBeingChecked: Set<String> = []
+    /// How much each voice had said when it was last compared.
+    private var checkedAtTalk: [String: TimeInterval] = [:]
+    /// A voice nobody recognised is compared again once it has said this
+    /// much: five seconds of someone is often too little to know them by.
+    private static let recheckAfter: [TimeInterval] = [15, 40]
     /// How long someone must talk before Warble asks who they are.
     private let askAfterSeconds: TimeInterval = 5
 
@@ -238,6 +243,7 @@ final class CallController: ObservableObject {
         skippedVoices = []
         voicesChecked = []
         voicesBeingChecked = []
+        checkedAtTalk = [:]
         askingWho = nil
         panelMinimized = false
         savedStats = nil
@@ -441,6 +447,18 @@ final class CallController: ObservableObject {
                 }
             }
         }
+        // How each person named sounded over this whole call joins what
+        // Warble knows of them, so they're recognised on the next call even if
+        // Teams makes them sound a bit different (one recording wasn't enough).
+        var learned = Set<String>()
+        for id in names.keys.sorted(by: { (talk[$0] ?? 0) > (talk[$1] ?? 0) }) {
+            guard let name = names[id], !learned.contains(name.lowercased()),
+                  let print = heard.splitter.callPrint(for: id) else { continue }
+            learned.insert(name.lowercased())
+            // Only if the voice stayed one person all call.
+            if let anchor = heard.splitter.fingerprint(for: id), VoiceMatcher.distance(print, anchor) > 0.4 { continue }
+            voices.reinforce(name: name, embedding: print)
+        }
         // Go over the whole recording of the other side, which tells people
         // apart better than the live check, and put the names on its voices.
         if let others = recorder.recordings.first(where: { $0.speaker == CallRecorder.othersLabel }) {
@@ -581,8 +599,15 @@ final class CallController: ObservableObject {
     private func checkNewVoicesAgainstKnownPeople() {
         guard let speakers = recorder?.speakers else { return }
         let talk = SpeakerAssigner.talkTime(voiceSegments)
-        for id in Set(voiceSegments.map(\.speakerID))
-        where !voicesChecked.contains(id) && !voicesBeingChecked.contains(id) && (talk[id] ?? 0) >= askAfterSeconds {
+        for id in Set(voiceSegments.map(\.speakerID)) where !voicesBeingChecked.contains(id) && !isKnown(id) {
+            let spoken = talk[id] ?? 0
+            guard spoken >= askAfterSeconds else { continue }
+            if voicesChecked.contains(id) {
+                // Not recognised last time: try again once they've said more.
+                let last = checkedAtTalk[id] ?? 0
+                guard Self.recheckAfter.contains(where: { $0 > last && spoken >= $0 }) else { continue }
+            }
+            checkedAtTalk[id] = spoken
             guard !voices.voices.isEmpty || !namesThisCall.isEmpty else { voicesChecked.insert(id); continue }
             voicesBeingChecked.insert(id)
             let known = voices.voices
@@ -603,6 +628,8 @@ final class CallController: ObservableObject {
                 if let embedding, let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: known),
                    self.namesThisCall[id] == nil {
                     self.namesThisCall[id] = name
+                    // Recognised now they've said more: no need to ask.
+                    if self.askingWho?.speakerID == id { self.askingWho = nil }
                     self.refreshLiveSpeakers()
                 }
                 self.askAboutNextUnknownVoice()
@@ -682,6 +709,7 @@ final class CallController: ObservableObject {
         let latest = voiceSegments.last { voiceName($0.speakerID) == name }?.speakerID ?? speakerID
         if let split = splitter.splitRecent(of: latest) {
             voicesChecked.insert(split)
+            checkedAtTalk[split] = .infinity   // you said who it isn't; ask, don't guess
             askingWho = UnknownVoice(speakerID: split, sample: sample(for: split), hint: nameHint(for: split))
         } else {
             skippedVoices.remove(speakerID)

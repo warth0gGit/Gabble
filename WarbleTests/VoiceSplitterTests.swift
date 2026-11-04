@@ -126,3 +126,42 @@ final class NameHintTests: XCTestCase {
         XCTAssertNil(NameHints.guess(own: [], before: ["Thanks, Jordan."], taken: ["Jordan"]), "already on the call")
     }
 }
+
+/// Knowing someone again on a later call (Jonny, 4 November: people he'd
+/// named before were asked about again).
+final class VoiceLearningTests: XCTestCase {
+    func testEachCallAddsToWhatWarbleKnowsOfSomeone() {
+        var matt = Voiceprint(name: "Matt", embedding: [1, 0, 0])
+        matt.learn([0.8, 0.6, 0])
+        XCTAssertEqual(matt.prints.count, 2, "the old recording is kept, not replaced")
+        // Sounding like either call is enough.
+        XCTAssertEqual(VoiceMatcher.match([1, 0.05, 0], known: [matt]), "Matt")
+        XCTAssertEqual(VoiceMatcher.match([0.8, 0.62, 0], known: [matt]), "Matt")
+        XCTAssertNil(VoiceMatcher.match([0, 0, 1], known: [matt]))
+        for _ in 0..<20 { matt.learn([1, 0.1, 0]) }
+        XCTAssertEqual(matt.prints.count, Voiceprint.maxSamples)
+    }
+
+    @MainActor
+    func testAMixUpDoesNotSpoilSomeonesVoice() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = VoiceprintStore(fileURL: url)
+        store.remember(name: "Jordan", embedding: [1, 0, 0])
+        store.reinforce(name: "Jordan", embedding: [0, 1, 0])   // someone else entirely
+        XCTAssertEqual(store.voices.first?.prints.count, 1)
+        store.reinforce(name: "Jordan", embedding: [1, 0.3, 0])
+        XCTAssertEqual(store.voices.first?.prints.count, 2)
+        // And it's kept for next time.
+        XCTAssertEqual(VoiceprintStore(fileURL: url).voices.first?.prints.count, 2)
+    }
+
+    func testAWholeCallPrintNeedsEnoughSpeech() {
+        var splitter = VoiceSplitter()
+        splitter.add([VoiceSegment(speakerID: "S1", start: 0, end: 6, embedding: [1, 0, 0])])
+        XCTAssertNil(splitter.callPrint(for: "S1"))
+        splitter.add([VoiceSegment(speakerID: "S1", start: 6, end: 12, embedding: [1, 0.1, 0]),
+                      VoiceSegment(speakerID: "S1", start: 12, end: 18, embedding: [1, 0, 0.1])])
+        XCTAssertNotNil(splitter.callPrint(for: "S1"))
+    }
+}

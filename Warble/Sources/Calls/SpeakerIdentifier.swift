@@ -15,8 +15,43 @@ struct VoiceSegment: Equatable {
 struct Voiceprint: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
+    /// Their voice on average (kept in step with `samples`).
     var embedding: [Float]
     var updated: Date = Date()
+    /// How they sounded on each of their recent calls. Teams and Zoom audio
+    /// varies from call to call, so one recording of someone isn't enough to
+    /// know them again; several are. Nil for voices saved before build 40.
+    var samples: [[Float]]? = nil
+
+    /// Every recording of them Warble keeps.
+    var prints: [[Float]] {
+        let kept = (samples ?? []).filter { !$0.isEmpty }
+        return kept.isEmpty ? [embedding] : kept
+    }
+
+    /// The most recordings of one person kept; the oldest goes first.
+    static let maxSamples = 8
+
+    /// Adds how they sounded on another call.
+    mutating func learn(_ print: [Float]) {
+        guard !print.isEmpty, embedding.isEmpty || print.count == embedding.count else { return }
+        var kept = embedding.isEmpty ? [] : prints
+        kept.append(print)
+        if kept.count > Self.maxSamples { kept.removeFirst(kept.count - Self.maxSamples) }
+        samples = kept
+        embedding = Self.average(kept)
+        updated = Date()
+    }
+
+    static func average(_ prints: [[Float]]) -> [Float] {
+        guard let size = prints.first?.count, size > 0 else { return [] }
+        var sum = [Float](repeating: 0, count: size)
+        for print in prints where print.count == size {
+            let unit = VoiceSplitter.unit(print)
+            for i in sum.indices { sum[i] += unit[i] }
+        }
+        return VoiceSplitter.unit(sum)
+    }
 }
 
 /// Saves the voices Warble has learned, so people are recognised on future calls.
@@ -45,11 +80,22 @@ final class VoiceprintStore: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !embedding.isEmpty else { return }
         if let index = voices.firstIndex(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
-            voices[index].embedding = embedding
-            voices[index].updated = Date()
+            // Added to what Warble already knows of them, not in place of it.
+            voices[index].learn(embedding)
         } else {
-            voices.append(Voiceprint(name: trimmed, embedding: embedding))
+            voices.append(Voiceprint(name: trimmed, embedding: embedding, samples: [embedding]))
         }
+        save()
+    }
+
+    /// Someone you named, or Warble clearly recognised, as they sounded on a
+    /// whole call. Skipped if it doesn't sound like what's on file for them,
+    /// so one mix-up can't spoil their voice.
+    func reinforce(name: String, embedding: [Float]) {
+        guard !embedding.isEmpty,
+              let index = voices.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }),
+              VoiceMatcher.distance(embedding, to: voices[index]) <= VoiceMatcher.learnDistance else { return }
+        voices[index].learn(embedding)
         save()
     }
 
@@ -86,9 +132,20 @@ enum VoiceMatcher {
         return 1 - dot / (normA.squareRoot() * normB.squareRoot())
     }
 
+    /// A whole-call recording of someone only joins what's on file for them
+    /// if it's at least this close (so a mix-up doesn't spoil their voice).
+    static let learnDistance: Float = 0.5
+
+    /// How far a voice is from a remembered person: the nearest of their
+    /// recordings from past calls, or their average, whichever is closer.
+    static func distance(_ embedding: [Float], to person: Voiceprint) -> Float {
+        let each = person.prints.map { distance(embedding, $0) }.min() ?? 2
+        return min(each, distance(embedding, person.embedding))
+    }
+
     /// The name of the remembered person this voice clearly is, or nil.
     static func match(_ embedding: [Float], known: [Voiceprint], within limit: Float = maxDistance) -> String? {
-        let ranked = known.map { (name: $0.name, distance: distance(embedding, $0.embedding)) }
+        let ranked = known.map { (name: $0.name, distance: distance(embedding, to: $0)) }
             .sorted { $0.distance < $1.distance }
         guard let best = ranked.first, best.distance <= limit else { return nil }
         if let second = ranked.dropFirst().first(where: { $0.name.caseInsensitiveCompare(best.name) != .orderedSame }),
@@ -116,13 +173,13 @@ enum VoiceMatcher {
     static func matchInCall(_ embedding: [Float], onCall: [Voiceprint], saved: [Voiceprint]) -> String? {
         let present = Set(onCall.map { $0.name.lowercased() })
         let others = saved.filter { !present.contains($0.name.lowercased()) }
-        let rankedOnCall = onCall.map { (name: $0.name, distance: distance(embedding, $0.embedding)) }
+        let rankedOnCall = onCall.map { (name: $0.name, distance: distance(embedding, to: $0)) }
             .sorted { $0.distance < $1.distance }
         let nearestOnCall = rankedOnCall.first
         let runnerUp = rankedOnCall.dropFirst()
             .first { $0.name.caseInsensitiveCompare(nearestOnCall?.name ?? "") != .orderedSame }
         let clearWinner = runnerUp.map { $0.distance - (nearestOnCall?.distance ?? 0) >= sameCallMargin } ?? true
-        let nearestOther = others.map { distance(embedding, $0.embedding) }.min() ?? 2
+        let nearestOther = others.map { distance(embedding, to: $0) }.min() ?? 2
         if let nearestOnCall, nearestOnCall.distance <= sameCallDistance, clearWinner,
            !(nearestOther <= maxDistance && nearestOther + 0.15 < nearestOnCall.distance) {
             return nearestOnCall.name
