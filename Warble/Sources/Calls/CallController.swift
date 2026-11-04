@@ -76,11 +76,16 @@ final class CallController: ObservableObject {
     struct UnknownVoice: Equatable {
         var speakerID: String
         var sample: String
+        /// A name said around when they started talking ("Thanks, Matt"), offered as a suggestion.
+        var hint: String? = nil
     }
     @Published private(set) var askingWho: UnknownVoice?
     /// Voices Warble has learned, kept between calls.
     let voices = VoiceprintStore()
-    private var voiceSegments: [VoiceSegment] = []
+    /// Every stretch of the other side's speech this call, checked so people
+    /// the voice engine lumped together are told apart (see VoiceSplitter).
+    private var splitter = VoiceSplitter()
+    private var voiceSegments: [VoiceSegment] { splitter.segments }
     private var namesThisCall: [String: String] = [:]
     private var skippedVoices: Set<String> = []
     /// Voices already compared with the people Warble knows (matched or not).
@@ -228,7 +233,7 @@ final class CallController: ObservableObject {
             self?.liveOthers = others
         }
         recorder.onVoices = { [weak self] segments in self?.heard(segments) }
-        voiceSegments = []
+        splitter = VoiceSplitter()
         namesThisCall = [:]
         skippedVoices = []
         voicesChecked = []
@@ -238,6 +243,8 @@ final class CallController: ObservableObject {
         savedStats = nil
         hideTask?.cancel()
         self.recorder = recorder
+        // Ready for going over the whole recording when the call ends.
+        OfflineVoices.shared.prepare()
         transcript = recorder.transcript
         recordingStarted = Date()
         meeting = calendar.meeting(at: Date(), appName: app.name)
@@ -370,10 +377,10 @@ final class CallController: ObservableObject {
         // call can start meanwhile; it must find Warble ready, not busy.
         self.recorder = nil
         stopSpeakerMeter()
-        let heard = VoiceBox(voiceSegments)
+        let heard = VoiceBox(splitter)
         var names = namesThisCall
         let checked = voicesChecked
-        recorder.onVoices = { segments in heard.segments.append(contentsOf: segments) }
+        recorder.onVoices = { segments in heard.splitter.add(segments) }
         recorder.onUpdate = nil
         let callMeeting = meeting
         meeting = nil
@@ -411,7 +418,7 @@ final class CallController: ObservableObject {
             }
         }
         if savingRereads { await showStep(.tidying, for: token) }
-        let voicesHeard = heard.segments
+        var voicesHeard = heard.splitter.segments
         // Voices that only became clear at the end of the call get the same strict check.
         let talk = SpeakerAssigner.talkTime(voicesHeard)
         let known = voices.voices
@@ -420,17 +427,36 @@ final class CallController: ObservableObject {
             // joins them instead of being matched to someone from another call.
             var onCall: [Voiceprint] = []
             for (otherID, name) in names {
-                if let other = await recorder.speakers.embedding(for: otherID) {
+                if let other = await Self.fingerprint(otherID, heard.splitter, recorder.speakers) {
                     onCall.append(Voiceprint(name: name, embedding: other))
                 }
             }
             for id in Set(voicesHeard.map(\.speakerID)) where names[id] == nil && !checked.contains(id) && (talk[id] ?? 0) >= 3 {
-                guard let embedding = await recorder.speakers.embedding(for: id) else { continue }
+                guard let embedding = await Self.fingerprint(id, heard.splitter, recorder.speakers) else { continue }
                 if let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: []) {
                     names[id] = name
                 } else if let name = VoiceMatcher.match(embedding, known: known, within: VoiceMatcher.afterCallDistance) {
                     // Nobody saw this name during the call, so only a very close match counts.
                     names[id] = name
+                }
+            }
+        }
+        // Go over the whole recording of the other side, which tells people
+        // apart better than the live check, and put the names on its voices.
+        if let others = recorder.recordings.first(where: { $0.speaker == CallRecorder.othersLabel }) {
+            let minutes = finished.duration / 60
+            let file = others.file
+            if let found = await withDeadline(seconds: 30 + minutes * 4, { await OfflineVoices.shared.voices(in: file) }) ?? nil {
+                let shifted = found.segments.map { segment -> VoiceSegment in
+                    var s = segment
+                    s.start += others.startOffset
+                    s.end += others.startOffset
+                    return s
+                }
+                if let reviewed = VoiceReview.relabel(review: shifted, live: voicesHeard, names: names,
+                                                      fingerprints: found.fingerprints) {
+                    voicesHeard = reviewed.segments
+                    names = reviewed.names
                 }
             }
         }
@@ -541,7 +567,7 @@ final class CallController: ObservableObject {
     // MARK: - Voices
 
     private func heard(_ segments: [VoiceSegment]) {
-        voiceSegments.append(contentsOf: segments)
+        splitter.add(segments)
         checkNewVoicesAgainstKnownPeople()
         askAboutNextUnknownVoice()
     }
@@ -561,12 +587,13 @@ final class CallController: ObservableObject {
             voicesBeingChecked.insert(id)
             let known = voices.voices
             let named = namesThisCall
+            let prints = splitter
             Task { [weak self] in
-                let embedding = await speakers.embedding(for: id)
+                let embedding = await Self.fingerprint(id, prints, speakers)
                 // The people already named on this call, as they sound today.
                 var onCall: [Voiceprint] = []
                 for (otherID, name) in named where otherID != id {
-                    if let other = await speakers.embedding(for: otherID) {
+                    if let other = await Self.fingerprint(otherID, prints, speakers) {
                         onCall.append(Voiceprint(name: name, embedding: other))
                     }
                 }
@@ -590,7 +617,22 @@ final class CallController: ObservableObject {
         guard let id = firstHeard.first(where: {
             !isKnown($0) && voicesChecked.contains($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
         }) else { return }
-        askingWho = UnknownVoice(speakerID: id, sample: sample(for: id))
+        askingWho = UnknownVoice(speakerID: id, sample: sample(for: id), hint: nameHint(for: id))
+    }
+
+    /// A name said just before this voice first spoke, or by the voice itself.
+    private func nameHint(for speakerID: String) -> String? {
+        guard let first = voiceSegments.first(where: { $0.speakerID == speakerID })?.start else { return nil }
+        let lines = transcript?.segments ?? []
+        let own = lines.filter { segment in
+            segment.speaker == CallRecorder.othersLabel
+                && SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: segment), in: voiceSegments) == speakerID
+        }.prefix(3).map(\.text)
+        let before = lines.filter { segment in
+            let spoken = CallTranscript.spokenRange(of: segment)
+            return spoken.upperBound <= first + 1 && spoken.upperBound >= first - 20
+        }.map(\.text)
+        return NameHints.guess(own: Array(own), before: before, taken: Array(Set(namesThisCall.values)))
     }
 
     /// Something the voice said recently, to help you recognise them.
@@ -610,8 +652,11 @@ final class CallController: ObservableObject {
         namesThisCall[asking.speakerID] = trimmed
         askingWho = nil
         let speakers = recorder?.speakers
+        let prints = splitter
         Task { [weak self] in
-            if let embedding = await speakers?.embedding(for: asking.speakerID) {
+            // How this voice sounded on this call, not the engine's blend, so
+            // the right voice is remembered for next time.
+            if let speakers, let embedding = await Self.fingerprint(asking.speakerID, prints, speakers) {
                 self?.voices.remember(name: trimmed, embedding: embedding)
             }
             self?.askAboutNextUnknownVoice()
@@ -625,13 +670,32 @@ final class CallController: ObservableObject {
         nameVoice(name)
     }
 
-    /// Tapping a person's chip: Warble got them wrong, so ask "Who's this?"
-    /// for that voice again. The new name replaces the old one on this call.
+    /// Tapping a person's chip: "the person talking now isn't them". Their
+    /// recent speech becomes a voice of its own and Warble asks who it is;
+    /// everything said before keeps the old name, and the new person is
+    /// remembered by their own voice. If there's too little to go on, the
+    /// whole voice is asked about again instead.
     func relabelVoice(_ speakerID: String) {
         guard isRecording, !["you", "others", "more"].contains(speakerID) else { return }
-        skippedVoices.remove(speakerID)
-        askingWho = UnknownVoice(speakerID: speakerID, sample: sample(for: speakerID))
+        // One person can be several voices; use the one heard most recently.
+        let name = voiceName(speakerID)
+        let latest = voiceSegments.last { voiceName($0.speakerID) == name }?.speakerID ?? speakerID
+        if let split = splitter.splitRecent(of: latest) {
+            voicesChecked.insert(split)
+            askingWho = UnknownVoice(speakerID: split, sample: sample(for: split), hint: nameHint(for: split))
+        } else {
+            skippedVoices.remove(speakerID)
+            askingWho = UnknownVoice(speakerID: speakerID, sample: sample(for: speakerID))
+        }
         refreshLiveSpeakers()
+    }
+
+    /// A voice's fingerprint from this call: Warble's own (see VoiceSplitter),
+    /// else the voice engine's.
+    nonisolated static func fingerprint(_ id: String, _ splitter: VoiceSplitter,
+                                        _ speakers: SpeakerIdentifier) async -> [Float]? {
+        if let print = splitter.fingerprint(for: id) { return print }
+        return await speakers.embedding(for: id)
     }
 
     func skipVoice() {
@@ -911,6 +975,6 @@ final class CallController: ObservableObject {
 /// speaker recognition don't mix with the next call's.
 @MainActor
 final class VoiceBox {
-    var segments: [VoiceSegment]
-    init(_ segments: [VoiceSegment]) { self.segments = segments }
+    var splitter: VoiceSplitter
+    init(_ splitter: VoiceSplitter) { self.splitter = splitter }
 }

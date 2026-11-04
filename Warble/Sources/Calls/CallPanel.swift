@@ -241,12 +241,12 @@ struct CallPanelView: View {
             }
         }
         if let asking = calls.askingWho {
-            whosThis(sample: asking.sample)
+            whosThis(sample: asking.sample, hint: asking.hint)
         }
     }
 
     @ViewBuilder
-    private func whosThis(sample: String) -> some View {
+    private func whosThis(sample: String, hint: String?) -> some View {
         Divider()
         HStack {
             Text("Who's this?")
@@ -279,6 +279,24 @@ struct CallPanelView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .truncationMode(.head)
+        }
+        if let hint {
+            Button {
+                whoName = ""
+                calls.nameVoice(hint)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "person.fill.questionmark").font(.caption2)
+                    Text("Is it \(hint)?").font(.caption.weight(.medium))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(WarbleColor.surface))
+                .overlay(Capsule().strokeBorder(WarbleColor.line, lineWidth: 1))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Someone said this name just before they spoke")
         }
         Text("Already on the call? Click their name above.")
             .font(.caption2)

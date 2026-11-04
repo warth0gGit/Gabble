@@ -7,6 +7,8 @@ struct VoiceSegment: Equatable {
     var speakerID: String
     var start: TimeInterval
     var end: TimeInterval
+    /// The voice engine's fingerprint of this stretch, if it gave one.
+    var embedding: [Float] = []
 }
 
 /// A person Warble knows by voice.
@@ -296,7 +298,8 @@ final class SpeakerIdentifier: @unchecked Sendable {
             let segments = result.segments.map {
                 VoiceSegment(speakerID: $0.speakerId,
                              start: base + Double($0.startTimeSeconds),
-                             end: base + Double($0.endTimeSeconds))
+                             end: base + Double($0.endTimeSeconds),
+                             embedding: $0.embedding)
             }
             guard !segments.isEmpty else { return }
             Task { @MainActor in onSegments?(segments) }
