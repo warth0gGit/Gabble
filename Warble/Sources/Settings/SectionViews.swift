@@ -347,6 +347,12 @@ struct CallsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var calls: CallController
     @State private var recent: [URL] = []
+    @State private var sharing: ShareTarget?
+
+    private struct ShareTarget: Identifiable {
+        let url: URL
+        var id: URL { url }
+    }
 
     var body: some View {
         Form {
@@ -387,6 +393,9 @@ struct CallsView: View {
                     HStack {
                         Text(url.deletingPathExtension().lastPathComponent)
                         Spacer()
+                        Button("Share") { sharing = ShareTarget(url: url) }
+                            .buttonStyle(.borderless)
+                            .help("Make a tidy PDF of this call to send to people")
                         Button("Open") { NSWorkspace.shared.open(url) }
                             .buttonStyle(.borderless)
                     }
@@ -401,6 +410,7 @@ struct CallsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Calls")
+        .sheet(item: $sharing) { target in ShareCallSheet(note: target.url) }
         .onAppear { recent = calls.recentTranscripts() }
         .onChange(of: calls.state) { _, _ in recent = calls.recentTranscripts() }
     }
