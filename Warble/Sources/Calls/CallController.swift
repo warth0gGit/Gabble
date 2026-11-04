@@ -65,6 +65,8 @@ final class CallController: ObservableObject {
     private var queuedCall: CallDetector.ActiveCall?
     /// Remembers where calls go, so it can file them without asking.
     let filing = FilingStore()
+    /// Calls whose summary is Apple's draft, waiting for Claude.
+    let summaryQueue = SummaryQueue()
     private let calendar = CalendarLookup()
     private var meeting: MeetingInfo?
     /// The saved call waiting to be filed (or re-filed).
@@ -131,6 +133,19 @@ final class CallController: ObservableObject {
             }
             .store(in: &cancellables)
         CallNotifier.shared.activate()
+
+        summaryQueue.callsFolder = { [weak self] in
+            self?.callsFolder ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        }
+        summaryQueue.onReplaced = { [weak self] entry, summary in self?.summaryReplaced(entry, summary) }
+    }
+
+    /// Too busy for Warble to ask Claude about older calls.
+    var isBusyForSummaries: Bool {
+        switch state {
+        case .recording, .saving: return true
+        default: return false
+        }
     }
 
     // MARK: - Detector events
@@ -668,14 +683,22 @@ final class CallController: ObservableObject {
     private func summarise(_ transcript: CallTranscript, savedAt url: URL) {
         let terms = lexicon.recognitionHints
         Task { [weak self] in
-            let result = await Task.detached(priority: .utility) {
+            let outcome = await Task.detached(priority: .utility) {
                 await CallSummariser.summarise(transcript, terms: terms)
             }.value
-            self?.addSummary(result, to: transcript, savedAt: url)
+            guard let self else { return }
+            let written = self.addSummary(outcome.state, to: transcript, savedAt: url)
+            // Claude couldn't answer (e.g. its usage limit): Apple's draft is in
+            // the note for now, and Warble asks Claude again later.
+            if outcome.retryWithClaude, let written {
+                self.summaryQueue.add(transcript, terms: terms, savedAt: written, problem: outcome.claudeProblem)
+            }
         }
     }
 
-    private func addSummary(_ result: CallSummaryState, to call: CallTranscript, savedAt url: URL) {
+    /// Adds the summary to the saved note, and says where the note is.
+    @discardableResult
+    private func addSummary(_ result: CallSummaryState, to call: CallTranscript, savedAt url: URL) -> URL? {
         // Usually the call is still the last one saved; it may have been moved
         // to another folder since, so use where it is now.
         let corrections = result.summary?.corrections ?? []
@@ -684,18 +707,32 @@ final class CallController: ObservableObject {
             saved.transcript.apply(corrections)
             lastSaved = saved
             if transcript?.started == call.started { transcript = saved.transcript }
-            try? saved.transcript.markdown.write(to: saved.url, atomically: true, encoding: .utf8)
-            return
+            guard (try? saved.transcript.markdown.write(to: saved.url, atomically: true, encoding: .utf8)) != nil else { return nil }
+            return saved.url
         }
         // A newer call has been saved since. Find this one's note by name.
-        guard let current = locate(url) else { return }
+        guard let current = locate(url) else { return nil }
         var updated = call
         updated.summary = result
         updated.apply(corrections)
         let folder = current.deletingLastPathComponent().standardizedFileURL.path
         let calls = callsFolder.standardizedFileURL.path
         if folder.hasPrefix(calls + "/") { updated.category = String(folder.dropFirst(calls.count + 1)) }
-        try? updated.markdown.write(to: current, atomically: true, encoding: .utf8)
+        guard (try? updated.markdown.write(to: current, atomically: true, encoding: .utf8)) != nil else { return nil }
+        return current
+    }
+
+    /// Claude has replaced Apple's draft in a note (see SummaryQueue). If it's
+    /// the call on the card, keep its summary in step, so renaming or filing
+    /// it doesn't bring the draft back.
+    private func summaryReplaced(_ entry: SummaryQueue.Entry, _ summary: CallSummary) {
+        guard var saved = lastSaved, saved.transcript.started == entry.started,
+              saved.transcript.appName == entry.appName else { return }
+        saved.transcript.summary = .done(summary)
+        saved.transcript.apply(summary.corrections)
+        if let moved = summaryQueue.locate(entry) { saved.url = moved }
+        lastSaved = saved
+        if transcript?.started == entry.started { transcript = saved.transcript }
     }
 
     /// Where a saved note is now: the same place, or another folder under Calls.

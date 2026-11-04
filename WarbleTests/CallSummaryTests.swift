@@ -55,7 +55,7 @@ final class CallSummaryTests: XCTestCase {
                        "- [ ] **[[Sarah Jones]]**: send the deck 📅 2027-01-22")
         XCTAssertEqual(CallSummary.task(.init(owner: "Speaker 2", task: "check the numbers", due: "next quarter"),
                                         people: people, callDate: start, calendar: utc),
-                       "- [ ] **Speaker 2**: check the numbers (next quarter)")
+                       "- [ ] **Speaker 2**: check the numbers", "no real date, so no date at all")
         XCTAssertEqual(CallSummary.task(.init(owner: "", task: "book a room"), people: people, callDate: start, calendar: utc),
                        "- [ ] book a room")
     }

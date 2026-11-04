@@ -396,7 +396,7 @@ struct CallsView: View {
                     NSWorkspace.shared.activateFileViewerSelecting([calls.callsFolder])
                 }
             }
-            SummaryEngineSection()
+            SummaryEngineSection(queue: calls.summaryQueue)
             KnownVoicesSection(voices: calls.voices)
         }
         .formStyle(.grouped)
@@ -728,7 +728,9 @@ struct MicrophonePicker: View {
 /// Who writes call summaries and action items: Claude (through Claude Code
 /// on this Mac) or Apple Intelligence.
 struct SummaryEngineSection: View {
+    @ObservedObject var queue: SummaryQueue
     @AppStorage(ClaudeSummariser.engineKey) private var engine = ClaudeSummariser.Engine.claude.rawValue
+    @AppStorage(ClaudeSummariser.modelKey) private var model = ClaudeSummariser.Model.standard.rawValue
     @State private var claudePath: String?
     @State private var checking = true
 
@@ -757,12 +759,42 @@ struct SummaryEngineSection: View {
                         .textSelection(.enabled)
                     Button("Check again", action: check)
                 }
+                Picker("Claude model", selection: $model) {
+                    ForEach(ClaudeSummariser.Model.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+            }
+            if !queue.entries.isEmpty {
+                HStack {
+                    Label(queue.entries.count == 1 ? "1 call waiting for Claude" : "\(queue.entries.count) calls waiting for Claude",
+                          systemImage: "clock.arrow.circlepath")
+                    Spacer()
+                    if queue.isRetrying {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Retry now") { queue.retryNow() }
+                    }
+                }
+                Text(waitingDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Text("Claude reads the whole call, catches every action, and fixes misheard words in the transcript. If Claude can't answer, Apple Intelligence writes the summary instead.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .onAppear(perform: check)
+    }
+
+    /// Why the calls are waiting and when Warble tries next.
+    private var waitingDetail: String {
+        var parts = ["Apple Intelligence wrote drafts of these summaries. Warble replaces them with Claude's when Claude answers."]
+        if let problem = queue.lastProblem { parts.append("Last try: \(problem)") }
+        if let next = queue.nextAttempt {
+            parts.append(next <= Date() ? "Next try in a few minutes." : "Next try \(Calendar.current.isDateInToday(next) ? next.formatted(date: .omitted, time: .shortened) : next.formatted(date: .abbreviated, time: .shortened)).")
+        }
+        return parts.joined(separator: " ")
     }
 
     private func check() {

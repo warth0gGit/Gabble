@@ -17,6 +17,34 @@ enum ClaudeSummariser {
 
     static let writer = "Claude (via Claude Code)"
 
+    /// Which Claude model writes summaries (Claude Code's --model).
+    static let modelKey = "summaryModel"
+    enum Model: String, CaseIterable, Identifiable {
+        /// Whatever Claude Code uses by default.
+        case standard = "default"
+        case sonnet, haiku
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .standard: return "Default"
+            case .sonnet: return "Sonnet"
+            case .haiku: return "Haiku (uses least of your Claude limit)"
+            }
+        }
+    }
+
+    static var model: Model {
+        Model(rawValue: UserDefaults.standard.string(forKey: modelKey) ?? "") ?? .standard
+    }
+
+    /// Claude Code's command line for a summary. Pure, unit tested.
+    static func arguments(for model: Model) -> [String] {
+        ["-p", "--output-format", "json"] + (model == .standard ? [] : ["--model", model.rawValue])
+    }
+
+    /// Why Claude didn't answer, when there's no point asking again later.
+    static let notInstalled = "Claude Code isn't installed on this Mac."
+
     /// Gives up after this long. Claude usually answers in well under a minute.
     static let timeout: Double = 540
 
@@ -80,11 +108,12 @@ enum ClaudeSummariser {
 
     static func summarise(_ transcript: CallTranscript, terms: [String]) async -> Result<CallSummary, CleanupFailure> {
         guard let claude = findClaude() else {
-            return .failure(CleanupFailure(reason: "Claude Code isn't installed on this Mac."))
+            return .failure(CleanupFailure(reason: notInstalled))
         }
         let input = prompt(for: transcript, terms: terms)
+        let commandLine = Self.arguments(for: model)
         let outcome = await withDeadline(seconds: timeout) {
-            await run(claude, input: input)
+            await run(claude, arguments: commandLine, input: input)
         }
         guard let outcome else {
             return .failure(CleanupFailure(reason: "Claude took too long to answer."))
@@ -94,7 +123,7 @@ enum ClaudeSummariser {
             return .failure(problem)
         case .success(let output):
             guard let summary = parse(output) else {
-                return .failure(CleanupFailure(reason: "Claude's answer couldn't be read."))
+                return .failure(CleanupFailure(reason: problem(in: output, stoppedWithError: false)))
             }
             return .success(summary)
         }
@@ -245,12 +274,13 @@ enum ClaudeSummariser {
         var data = Data()
     }
 
-    private static func run(_ claude: URL, input: String) async -> Result<String, CleanupFailure> {
+    private static func run(_ claude: URL, arguments: [String], input: String) async -> Result<String, CleanupFailure> {
         let running = Running()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Result<String, CleanupFailure>, Never>) in
                 DispatchQueue.global(qos: .utility).async {
-                    continuation.resume(returning: runBlocking(claude, input: input, process: running.process))
+                    continuation.resume(returning: runBlocking(claude, arguments: arguments, input: input,
+                                                               process: running.process))
                 }
             }
         } onCancel: {
@@ -258,14 +288,15 @@ enum ClaudeSummariser {
         }
     }
 
-    private static func runBlocking(_ claude: URL, input: String, process: Process) -> Result<String, CleanupFailure> {
+    private static func runBlocking(_ claude: URL, arguments: [String], input: String,
+                                    process: Process) -> Result<String, CleanupFailure> {
         // An empty folder to work in, so Claude Code has nothing it could read or change.
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("warble-claude-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
 
         process.executableURL = claude
-        process.arguments = ["-p", "--output-format", "json"]
+        process.arguments = arguments
         process.currentDirectoryURL = folder
         var environment = ProcessInfo.processInfo.environment
         // Apps opened from the Dock get a short PATH; Claude Code may need node.
@@ -297,12 +328,25 @@ enum ClaudeSummariser {
         errorRead.wait()
         let text = String(decoding: output, as: UTF8.self)
         if process.terminationStatus != 0 && parse(text) == nil {
-            let problem = String(decoding: errors.data + output, as: UTF8.self).lowercased()
-            if problem.contains("login") || problem.contains("log in") || problem.contains("auth") {
-                return .failure(CleanupFailure(reason: "Claude Code isn't signed in. Open Terminal, type claude, and sign in."))
-            }
-            return .failure(CleanupFailure(reason: "Claude Code stopped with an error."))
+            return .failure(CleanupFailure(reason: problem(in: String(decoding: errors.data + output, as: UTF8.self),
+                                                           stoppedWithError: true)))
         }
         return .success(text)
+    }
+
+    /// What went wrong, from Claude Code's output, in words for the note.
+    /// Pure, unit tested.
+    static func problem(in output: String, stoppedWithError: Bool) -> String {
+        let text = output.lowercased()
+        let limits = ["usage limit", "limit reached", "rate limit", "rate_limit", "too many requests",
+                      "overloaded", "resets at", "limit will reset", "out of extra usage"]
+        if limits.contains(where: { text.contains($0) }) {
+            return "Claude's usage limit was reached."
+        }
+        if text.contains("login") || text.contains("log in") || text.contains("not authenticated")
+            || text.contains("authentication") || text.contains("unauthorized") {
+            return "Claude Code isn't signed in. Open Terminal, type claude, and sign in."
+        }
+        return stoppedWithError ? "Claude Code stopped with an error." : "Claude's answer couldn't be read."
     }
 }

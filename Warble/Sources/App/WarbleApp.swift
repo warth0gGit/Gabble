@@ -24,6 +24,12 @@ struct WarbleApp: App {
         Task { @MainActor in
             StatusItemController.shared.install(appState: appState, dictation: dictation, calls: calls,
                                                 permissions: permissions)
+            // Ask Claude again for summaries Apple wrote as drafts, but never
+            // while you're on a recorded call or dictating.
+            calls.summaryQueue.isBusy = { [weak calls, weak dictation] in
+                (calls?.isBusyForSummaries ?? false) || (dictation?.isActive ?? false)
+            }
+            calls.summaryQueue.start()
         }
     }
 

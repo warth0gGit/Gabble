@@ -78,6 +78,13 @@ enum ActionSpotter {
                          hasDeadline: matches(deadlineCue, lowered), isOwn: own)
     }
 
+    /// The speaker is taking something on themselves ("I'll send it",
+    /// "let me check"), not handing it to someone else.
+    static func isFirstPersonCommitment(_ sentence: String) -> Bool {
+        let lowered = normalised(sentence)
+        return matches(ownCue, lowered) && !matches(otherCue, lowered)
+    }
+
     /// Splits a turn into sentences. A very long run-on turn (speech
     /// recognition sometimes leaves out full stops) is cut into pieces of
     /// about 30 words so a prompt line stays short.

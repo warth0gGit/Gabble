@@ -82,17 +82,24 @@ struct CallTranscript: Equatable {
     /// Fixes words speech recognition misheard, e.g. "closer play" to "close
     /// of play". Whole words only, ignoring case.
     mutating func apply(_ corrections: [CallSummary.Correction]) {
+        segments = segments.map { segment in
+            var s = segment
+            s.text = Self.applying(corrections, to: s.text)
+            return s
+        }
+    }
+
+    /// The same fixes on any text, such as the transcript in a saved note.
+    static func applying(_ corrections: [CallSummary.Correction], to text: String) -> String {
+        var result = text
         for fix in corrections {
             let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: fix.heard) + "(?![\\p{L}\\p{N}])"
             guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
             let template = NSRegularExpression.escapedTemplate(for: fix.meant)
-            segments = segments.map { segment in
-                var s = segment
-                s.text = regex.stringByReplacingMatches(in: s.text, range: NSRange(s.text.startIndex..., in: s.text),
-                                                        withTemplate: template)
-                return s
-            }
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result),
+                                                    withTemplate: template)
         }
+        return result
     }
 
     /// Renames speakers, e.g. "Others" phrases to the person recognised by voice.
@@ -155,6 +162,7 @@ struct CallTranscript: Equatable {
         if let summary = summary.summary {
             if !summary.headline.isEmpty { lines.append("summary: \(yaml(summary.headline))") }
             lines.append("summarized_by: \(yaml(summary.writer))")
+            if summary.provisional { lines.append(CallSummary.provisionalStatus) }
         }
         lines.append("tags: [\((["call", "warble"] + (meeting?.seriesID != nil ? ["recurring"] : [])).joined(separator: ", "))]")
         lines.append("---")
@@ -202,7 +210,10 @@ struct CallTranscript: Equatable {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
     }
 
-    private func yaml(_ value: String) -> String {
+    private func yaml(_ value: String) -> String { Self.yamlValue(value) }
+
+    /// A value for the front matter, quoted when YAML needs it.
+    static func yamlValue(_ value: String) -> String {
         let needsQuotes = value.contains { ":#[]{},&*!|>'\"%@`".contains($0) } || value.hasPrefix(" ")
         return needsQuotes ? "\"" + value.replacingOccurrences(of: "\"", with: "\\\"") + "\"" : value
     }
