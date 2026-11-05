@@ -113,7 +113,10 @@ final class MicrophoneCapture: @unchecked Sendable {
     private var generation = 0
     private var buffersSeen = 0
     // Only touched on `queue`.
+    /// One engine for this microphone's whole life, restarted rather than
+    /// replaced (see `keptEngines`).
     private var engine: AVAudioEngine?
+    private var running = false
     private var observer: NSObjectProtocol?
     private var handler: Handler?
     private var deviceUID = MicrophoneChoice.systemDefault
@@ -147,9 +150,27 @@ final class MicrophoneCapture: @unchecked Sendable {
 
     // MARK: - On the microphone queue
 
+    /// Every audio engine Warble has made, kept until it quits. macOS can
+    /// crash the app while throwing an audio engine away if its microphone
+    /// went missing meanwhile (the Mac slept, or AirPods were put away); that
+    /// took Warble down on 5 November. A stopped engine costs very little, so
+    /// none is ever thrown away, and each microphone reuses its own.
+    private static let keptLock = NSLock()
+    nonisolated(unsafe) private static var keptEngines: [AVAudioEngine] = []
+
+    private func reusableEngine() -> AVAudioEngine {
+        if let engine { return engine }
+        let made = AVAudioEngine()
+        Self.keptLock.lock()
+        Self.keptEngines.append(made)
+        Self.keptLock.unlock()
+        engine = made
+        return made
+    }
+
     private func run(generation mine: Int) -> Bool {
         tearDown()
-        let engine = AVAudioEngine()
+        let engine = reusableEngine()
         if let device = MicrophoneChoice.device(for: deviceUID, in: InputDevices.all()),
            let unit = engine.inputNode.audioUnit {
             var id = device.id
@@ -179,18 +200,22 @@ final class MicrophoneCapture: @unchecked Sendable {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
             return false
         }
-        self.engine = engine
+        running = true
         return true
     }
 
+    /// Stops the microphone; the engine is kept to start again later.
     private func tearDown() {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
-        engine = nil
+        guard let engine, running else { return }
+        running = false
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
     }
 
     /// If nothing at all arrives soon after starting (a Bluetooth microphone that
