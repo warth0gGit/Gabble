@@ -283,7 +283,11 @@ final class CallController: ObservableObject {
         // A new call: the last call's check closes as if you pressed Later,
         // and its summary (if still waiting) is written now.
         if speakerCheck?.finished == false { closeCheck(confirmed: false) }
-        releaseHeldSummary()
+        if heldSummary != nil {
+            releaseHeldSummary()
+        } else if checkChangedAfterSummary, let saved = lastSaved, saved.transcript.summary != .none {
+            summarise(saved.transcript, savedAt: saved.url)   // names changed after it was written
+        }
         checkChangedAfterSummary = false
         clips.stop()
         callApp = app
@@ -634,7 +638,7 @@ final class CallController: ObservableObject {
             ? SpeakerCheck(rows: checkRows, url: URL(fileURLWithPath: "/"), started: finished.started,
                            othersFile: othersRecording?.file, othersOffset: othersRecording?.startOffset ?? 0,
                            voices: voicesHeard, prints: checkPrints, learnedAtSave: learnedAtSave,
-                           learnedLive: learnedLive)
+                           learnedLive: learnedLive, savedNames: names)
             : nil
         guard !finished.segments.isEmpty else {
             if shownHere {
@@ -833,7 +837,7 @@ final class CallController: ObservableObject {
     private func applyCheckNames() {
         guard let check = speakerCheck, var saved = lastSaved, saved.transcript.started == check.started else { return }
         // Unnamed voices keep their numbers ("Speaker 3") as you name others.
-        let names = check.originalNames
+        let names = check.savedNames
         check.relabel(&saved.transcript) { [self] id in voiceName(id, voices: check.voices, names: names) }
         do {
             // In place: the note keeps its name, so links to it still work.
@@ -870,15 +874,20 @@ final class CallController: ObservableObject {
         guard var check = speakerCheck else { return }
         clips.stop()
         let current = Set(check.rows.compactMap { $0.name?.lowercased() })
-        for row in check.rows {
-            guard let original = row.originalName?.lowercased(),
-                  original != row.name?.lowercased(), !current.contains(original) else { continue }
-            for label in check.learnedLive[original] ?? [] { voices.unlearn(label) }
-            check.learnedLive[original] = nil
-            if let label = check.learnedAtSave[row.id] {
-                voices.unlearn(label)
-                check.learnedAtSave[row.id] = nil
+        for index in check.rows.indices {
+            let row = check.rows[index]
+            guard let original = row.originalName?.lowercased(), original != row.name?.lowercased() else { continue }
+            if !current.contains(original) {
+                for label in check.learnedLive[original] ?? [] { voices.unlearn(label) }
+                check.learnedLive[original] = nil
+                if let label = check.learnedAtSave[row.id] {
+                    voices.unlearn(label)
+                    check.learnedAtSave[row.id] = nil
+                }
             }
+            // Taken back once: closing the check again mustn't undo what was
+            // learned for the corrected name.
+            check.rows[index].originalName = row.name
         }
         if learn {
             for row in check.rows where row.confirmed {

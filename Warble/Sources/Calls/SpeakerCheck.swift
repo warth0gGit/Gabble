@@ -59,15 +59,14 @@ struct SpeakerCheck: Equatable {
     var learnedAtSave: [String: UUID]
     /// What Warble learned from names given live on this call, by name (lowercased).
     var learnedLive: [String: [UUID]] = [:]
+    /// Every voice's name as the call was saved (including voices too short
+    /// to list), so "Speaker N" numbers stay put as you fix names.
+    var savedNames: [String: String] = [:]
     /// Done or Later pressed.
     var finished = false
 
     var toCheck: Int { rows.filter(\.needsCheck).count }
 
-    /// The names as the call was saved, by voice.
-    var originalNames: [String: String] {
-        Dictionary(rows.compactMap { row in row.originalName.map { (row.id, $0) } }, uniquingKeysWith: { first, _ in first })
-    }
 
     /// Voices quieter than this aren't listed (usually noise or a cough).
     static let minimumTalk: TimeInterval = 3
