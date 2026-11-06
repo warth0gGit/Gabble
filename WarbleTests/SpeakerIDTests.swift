@@ -167,4 +167,16 @@ final class VoiceGuessTests: XCTestCase {
         XCTAssertEqual(drifted?.confidence, .tentative, "close-ish to Jordan: shown as Jordan?, not named outright")
         XCTAssertNil(VoiceMatcher.guessInCall(voice(5), onCall: onCall, saved: [matt]))
     }
+
+    func testMoreSpeechDecidesWhoSomeoneFromAnEarlierCallIs() {
+        let first = voice(0, distance: VoiceMatcher.maxDistance + 0.1)   // their first few seconds: unsure
+        let heard = voice(0, distance: 0.1)                               // everything they've said since
+        XCTAssertNil(VoiceMatcher.matchInCall(first, onCall: [], saved: [matt, aj]))
+        XCTAssertEqual(VoiceMatcher.matchInCall(first, onCall: [], saved: [matt, aj], heard: heard), "Matt")
+        XCTAssertEqual(VoiceMatcher.guessInCall(first, onCall: [], saved: [matt, aj], heard: heard)?.confidence, .recognised)
+        // People already on this call are still compared by the first seconds.
+        let jordan = Voiceprint(name: "Jordan", embedding: voice(2))
+        XCTAssertEqual(VoiceMatcher.matchInCall(voice(2, distance: 0.1), onCall: [jordan], saved: [matt],
+                                                heard: voice(2, distance: 0.1)), "Jordan")
+    }
 }

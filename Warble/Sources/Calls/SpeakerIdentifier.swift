@@ -249,8 +249,9 @@ enum VoiceMatcher {
     /// still be them. The voice engine has already judged this voice to be
     /// new (further than newVoiceDistance from everyone), so only a clearly
     /// closer match overrules it; a looser value folded a fifth person on a
-    /// big call into one of the first four.
-    static let sameCallDistance: Float = 0.45
+    /// big call into one of the first four. Measured: at 0.45 about one
+    /// rejoin in seven was the wrong person; at 0.4 one in thirteen.
+    static let sameCallDistance: Float = 0.4
     /// Naming someone from an earlier call only after this call has ended,
     /// when you never saw them on the card, needs a very close match.
     static let afterCallDistance: Float = 0.3
@@ -438,7 +439,11 @@ final class SpeakerIdentifier: @unchecked Sendable {
     /// at 0.6 a man talking for minutes was taken for a woman already named
     /// (and her fingerprint drifted to his voice). Splitting one person into
     /// two is fixable (matchInCall rejoins them, or you rename); a merge isn't.
-    static let newVoiceDistance: Float = 0.5
+    /// Measured on real conference calls squeezed through a phone-quality
+    /// codec (docs: speaker-id technical findings): 0.45 put the least speech
+    /// under a wrong name end to end; 0.5 merged more people, 0.4 split
+    /// people so often that rejoining them went wrong more.
+    static let newVoiceDistance: Float = 0.45
     /// A voice's fingerprint is only refined with audio this close to it.
     static let refineDistance: Float = 0.3
 
