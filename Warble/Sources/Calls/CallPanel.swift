@@ -61,6 +61,14 @@ final class CallPanel {
         panel.orderOut(nil)
     }
 
+    /// Stops the card taking typing (after "Who's this?" is answered), so
+    /// keys go back to the call app's window.
+    func giveUpKeyboard() {
+        guard panel.isKeyWindow else { return }
+        panel.orderOut(nil)
+        panel.orderFrontRegardless()
+    }
+
     private func resize(to newSize: CGSize) {
         guard newSize.width > 1, newSize.height > 1, newSize != size else { return }
         size = newSize
@@ -127,6 +135,10 @@ struct CallPanelView: View {
             }
         }
         .environment(\.colorScheme, .dark)
+        // Text half-typed for one voice must never name the next one.
+        .onChange(of: calls.askingWho?.speakerID) { _, _ in whoName = "" }
+        // Voice ids start again on each call.
+        .onChange(of: calls.recordingStarted) { _, _ in openChip = nil }
         .onGeometryChange(for: CGSize.self) { proxy in
             proxy.size
         } action: { size in
@@ -261,10 +273,11 @@ struct CallPanelView: View {
         if let id = openChip, let speaker = calls.liveSpeakers.first(where: { $0.id == id }) {
             chipChoices(for: speaker)
         }
+        if let naming = calls.lastNaming {
+            undoRow(naming)
+        }
         if let asking = calls.askingWho {
             whosThis(asking)
-        } else if let naming = calls.lastNaming {
-            undoRow(naming)
         }
     }
 
@@ -448,9 +461,7 @@ struct CallPanelView: View {
 
     /// After you answer, the keyboard goes back to the call app.
     private func returnKeyboard() {
-        if let front = NSWorkspace.shared.frontmostApplication, front != NSRunningApplication.current {
-            front.activate()
-        }
+        calls.returnKeyboard()
     }
 
     private var miniPill: some View {

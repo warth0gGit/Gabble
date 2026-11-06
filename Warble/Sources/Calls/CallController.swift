@@ -105,6 +105,11 @@ final class CallController: ObservableObject {
         var learned: UUID?
     }
     @Published private(set) var lastNaming: Naming?
+    /// What Warble learned from names you gave on this call, by name
+    /// (lowercased), so a name corrected after the call can be taken back out.
+    private var liveLearned: [String: [UUID]] = [:]
+    /// The app the call is in, to hand the keyboard back to.
+    private var callApp: CallApp?
     /// Namings undone before Warble finished learning from them.
     private var undoneNamings: Set<UUID> = []
     /// Voices you said to ask about after the call instead.
@@ -275,6 +280,14 @@ final class CallController: ObservableObject {
         }
         recorder.onVoices = { [weak self] segments in self?.heard(segments) }
         splitter = VoiceSplitter()
+        // A new call: the last call's check closes as if you pressed Later,
+        // and its summary (if still waiting) is written now.
+        if speakerCheck?.finished == false { closeCheck(confirmed: false) }
+        releaseHeldSummary()
+        checkChangedAfterSummary = false
+        clips.stop()
+        callApp = app
+        liveLearned = [:]
         namesThisCall = [:]
         nameConfidence = [:]
         lastNaming = nil
@@ -461,6 +474,7 @@ final class CallController: ObservableObject {
         var names = namesThisCall.filter { !guessedIDs.contains($0.key) }
         let guesses = namesThisCall.filter { guessedIDs.contains($0.key) }
         let namedLive = Set(namesThisCall.filter { nameConfidence[$0.key] == .confirmed }.values.map { $0.lowercased() })
+        let learnedLive = liveLearned
         let checked = voicesChecked
         lastNaming = nil
         askTimeout?.cancel()
@@ -619,7 +633,8 @@ final class CallController: ObservableObject {
         let check: SpeakerCheck? = checkRows.contains(where: \.needsCheck)
             ? SpeakerCheck(rows: checkRows, url: URL(fileURLWithPath: "/"), started: finished.started,
                            othersFile: othersRecording?.file, othersOffset: othersRecording?.startOffset ?? 0,
-                           voices: voicesHeard, prints: checkPrints, learnedAtSave: learnedAtSave)
+                           voices: voicesHeard, prints: checkPrints, learnedAtSave: learnedAtSave,
+                           learnedLive: learnedLive)
             : nil
         guard !finished.segments.isEmpty else {
             if shownHere {
@@ -642,9 +657,10 @@ final class CallController: ObservableObject {
             lexicon.harvest(from: finished.plainText)
             if let sure { filing.learn(features, folder: sure.folder) }
             // With speakers to check on the card, the summary waits for Done
-            // or Later (or three minutes), so it uses the right names.
-            let holdSummary = finished.summary == .pending && check != nil && shownHere
-            if finished.summary == .pending && !holdSummary { summarise(finished, savedAt: url) }
+            // or Later (or three minutes), so it uses the right names. That's
+            // only decided once the card is sure to show this call; on every
+            // other path the summary starts now.
+            let wantsSummary = finished.summary == .pending
             let stats = SavedStats(minutes: max(1, Int((finished.duration / 60).rounded())),
                                    speakers: finished.speakers.count,
                                    words: SummaryChunker.wordCount(finished.plainText),
@@ -652,18 +668,25 @@ final class CallController: ObservableObject {
             notifySaved(finished, stats: stats, url: url, filed: sure?.folder)
             // A newer call has taken over the card: this one stays where it was
             // saved (Unfiled if Warble wasn't sure), and the notification says so.
-            guard shownHere else { return }
+            guard shownHere else {
+                if wantsSummary { summarise(finished, savedAt: url) }
+                return
+            }
             await showStep(nil, for: token)
-            guard shownHere else { return }
+            guard shownHere else {
+                if wantsSummary { summarise(finished, savedAt: url) }
+                return
+            }
             lastSaved = (url, finished, features)
             transcript = finished
             savedStats = stats
             if var check {
                 check.url = url
                 speakerCheck = check
-                if holdSummary { holdSummaryForCheck(finished, savedAt: url) }
+                if wantsSummary { holdSummaryForCheck(finished, savedAt: url) }
             } else {
                 speakerCheck = nil
+                if wantsSummary { summarise(finished, savedAt: url) }
             }
             if let sure {
                 filedNote = "Filed in \(sure.folder) (\(sure.reason))."
@@ -748,6 +771,7 @@ final class CallController: ObservableObject {
     }
 
     private func holdSummaryForCheck(_ transcript: CallTranscript, savedAt url: URL) {
+        releaseHeldSummary()   // an earlier call's summary never waits on this one
         heldSummary = (transcript, url)
         heldSummaryTask?.cancel()
         heldSummaryTask = Task { [weak self] in
@@ -808,10 +832,13 @@ final class CallController: ObservableObject {
     /// Rewrites the saved note with the check's names.
     private func applyCheckNames() {
         guard let check = speakerCheck, var saved = lastSaved, saved.transcript.started == check.started else { return }
-        check.relabel(&saved.transcript) { [self] id in voiceName(id, voices: check.voices, names: [:]) }
+        // Unnamed voices keep their numbers ("Speaker 3") as you name others.
+        let names = check.originalNames
+        check.relabel(&saved.transcript) { [self] id in voiceName(id, voices: check.voices, names: names) }
         do {
-            let url = try save(saved.transcript)
-            if url != saved.url { try? FileManager.default.removeItem(at: saved.url) }
+            // In place: the note keeps its name, so links to it still work.
+            let url = locate(saved.url) ?? saved.url
+            try saved.transcript.markdown.write(to: url, atomically: true, encoding: .utf8)
             saved.url = url
             lastSaved = saved
             if transcript?.started == saved.transcript.started { transcript = saved.transcript }
@@ -825,23 +852,43 @@ final class CallController: ObservableObject {
     /// it learned for a name you corrected). Rows you left alone aren't
     /// learned. Then the summary is written (again, if names changed after it).
     func finishCheck() {
-        guard var check = speakerCheck else { return }
-        clips.stop()
-        for row in check.rows where row.confirmed {
-            guard let name = row.name, let print = check.prints[row.id] else { continue }
-            if let label = check.learnedAtSave[row.id] { voices.unlearn(label) }
-            if let label = voices.remember(name: name, embedding: print) { check.learnedAtSave[row.id] = label }
-        }
-        check.finished = true
-        speakerCheck = check
+        closeCheck(confirmed: true)
         endCheck()
     }
 
-    /// Later: nothing more is learned now; the check stays on the Calls page.
+    /// Later: nothing new is learned, but a name you corrected is still
+    /// taken back out. The check stays on the Calls page.
     func postponeCheck() {
-        clips.stop()
-        speakerCheck?.finished = true
+        closeCheck(confirmed: false)
         endCheck()
+    }
+
+    /// Takes back what Warble learned under a name you corrected (unless
+    /// another voice on the call still has that name) and, for Done, learns
+    /// the rows you confirmed.
+    private func closeCheck(confirmed learn: Bool) {
+        guard var check = speakerCheck else { return }
+        clips.stop()
+        let current = Set(check.rows.compactMap { $0.name?.lowercased() })
+        for row in check.rows {
+            guard let original = row.originalName?.lowercased(),
+                  original != row.name?.lowercased(), !current.contains(original) else { continue }
+            for label in check.learnedLive[original] ?? [] { voices.unlearn(label) }
+            check.learnedLive[original] = nil
+            if let label = check.learnedAtSave[row.id] {
+                voices.unlearn(label)
+                check.learnedAtSave[row.id] = nil
+            }
+        }
+        if learn {
+            for row in check.rows where row.confirmed {
+                guard let name = row.name, let print = check.prints[row.id] else { continue }
+                if let label = check.learnedAtSave[row.id] { voices.unlearn(label) }
+                if let label = voices.remember(name: name, embedding: print) { check.learnedAtSave[row.id] = label }
+            }
+        }
+        check.finished = true
+        speakerCheck = check
     }
 
     private func endCheck() {
@@ -942,6 +989,7 @@ final class CallController: ObservableObject {
         askingWho = UnknownVoice(speakerID: id, sample: sample(for: id), hint: hint,
                                  suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []))
         restartAskTimeout()
+        let askedAt = askingWho?.askedAt
         guard let speakers = recorder?.speakers else { return }
         let prints = splitter
         let known = voices.voices
@@ -963,7 +1011,7 @@ final class CallController: ObservableObject {
             let close = onCall.filter {
                 $0.distance <= VoiceMatcher.tentativeDistance && $0.name.caseInsensitiveCompare(excluded ?? "") != .orderedSame
             }
-            guard let self, self.askingWho?.speakerID == id else { return }
+            guard let self, self.askingWho?.speakerID == id, self.askingWho?.askedAt == askedAt else { return }
             self.askingWho?.suggestions = NameSuggestion.build(hint: hint, candidates: candidates,
                                                                onCall: close.map { ($0.name, $0.voiceID, $0.distance) })
         }
@@ -1066,8 +1114,9 @@ final class CallController: ObservableObject {
                let self, let label = self.voices.remember(name: name, embedding: embedding) {
                 if self.undoneNamings.contains(namingID) {
                     self.voices.unlearn(label)   // undone while it was being learned
-                } else if self.lastNaming?.id == namingID {
-                    self.lastNaming?.learned = label
+                } else {
+                    if self.lastNaming?.id == namingID { self.lastNaming?.learned = label }
+                    if self.isRecording { self.liveLearned[name.lowercased(), default: []].append(label) }
                 }
             }
             self?.askAboutNextUnknownVoice()
@@ -1084,7 +1133,12 @@ final class CallController: ObservableObject {
             namesThisCall[id] = naming.previousNames[id]
             nameConfidence[id] = naming.previousConfidence[id]
         }
-        if let label = naming.learned { voices.unlearn(label) } else { undoneNamings.insert(naming.id) }
+        if let label = naming.learned {
+            voices.unlearn(label)
+            liveLearned[naming.name.lowercased()]?.removeAll { $0 == label }
+        } else {
+            undoneNamings.insert(naming.id)
+        }
         refreshLiveSpeakers()
         if let id = naming.voiceIDs.first(where: { namesThisCall[$0] == nil }), isRecording {
             askTimeout?.cancel()
@@ -1133,6 +1187,18 @@ final class CallController: ObservableObject {
         askTimeout?.cancel()
         askingWho = nil
         ask(about: latest)
+    }
+
+    /// After you answer "Who's this?", the keyboard goes back to the call:
+    /// the card stops taking typing, and if Warble became the active app the
+    /// call app is brought back.
+    func returnKeyboard() {
+        panel?.giveUpKeyboard()
+        guard NSApp.isActive, let app = callApp else { return }
+        let running = NSWorkspace.shared.runningApplications.first { running in
+            app.bundlePrefixes.contains { running.bundleIdentifier?.lowercased().hasPrefix($0) == true }
+        }
+        running?.activate()
     }
 
     /// How long ago a voice last spoke, or nil if Warble can't tell.

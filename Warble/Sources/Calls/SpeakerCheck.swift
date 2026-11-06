@@ -26,6 +26,8 @@ struct SpeakerCheck: Equatable {
         var id: String
         /// The name it has now (without any "?").
         var name: String?
+        /// The name it had when the call was saved.
+        var originalName: String?
         var status: Status
         /// "voice 1", "voice 2" when the name is shared.
         var part: Int? = nil
@@ -55,10 +57,17 @@ struct SpeakerCheck: Equatable {
     /// Voice recordings Warble learned when the call was saved, by voice, so
     /// a name you correct can be taken back out.
     var learnedAtSave: [String: UUID]
+    /// What Warble learned from names given live on this call, by name (lowercased).
+    var learnedLive: [String: [UUID]] = [:]
     /// Done or Later pressed.
     var finished = false
 
     var toCheck: Int { rows.filter(\.needsCheck).count }
+
+    /// The names as the call was saved, by voice.
+    var originalNames: [String: String] {
+        Dictionary(rows.compactMap { row in row.originalName.map { (row.id, $0) } }, uniquingKeysWith: { first, _ in first })
+    }
 
     /// Voices quieter than this aren't listed (usually noise or a cough).
     static let minimumTalk: TimeInterval = 3
@@ -98,7 +107,7 @@ struct SpeakerCheck: Equatable {
             }
             let longest = voices.filter { $0.speakerID == id }.max { ($0.end - $0.start) < ($1.end - $1.start) }
             let clip = longest.map { $0.start...min($0.end, $0.start + clipLength) }
-            return Row(id: id, name: name, status: status, part: part, talk: talk[id] ?? 0,
+            return Row(id: id, name: name, originalName: name, status: status, part: part, talk: talk[id] ?? 0,
                        quote: quote(id), clip: clip)
         }
     }

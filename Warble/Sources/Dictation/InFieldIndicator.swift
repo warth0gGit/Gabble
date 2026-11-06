@@ -58,7 +58,8 @@ final class InFieldIndicator {
         followTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
-                let spot = await Task.detached(priority: .userInitiated) { CursorLocator.current() }.value
+                guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { continue }
+                let spot = await Task.detached(priority: .userInitiated) { CursorLocator.current(pid: pid) }.value
                 guard let self else { return }
                 guard !Task.isCancelled, self.panel.isVisible,
                       let spot, let center = InFieldIndicator.cocoaCenter(for: spot) else { continue }

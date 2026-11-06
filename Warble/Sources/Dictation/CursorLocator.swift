@@ -21,12 +21,15 @@ enum CursorLocator {
     /// How long one Accessibility question may take before Warble gives up on it.
     static let timeLimit: Float = 0.1
 
-    /// The cursor in whatever has focus now, without checking that it's a text
-    /// box (the caller already did, when dictation started). Safe off the main thread.
-    nonisolated static func current() -> CursorSpot? {
-        let system = AXUIElementCreateSystemWide()
+    /// The cursor in app `pid`'s focused element, without checking that it's a
+    /// text box (the caller already did, when dictation started). Every
+    /// question, including finding the focused element, has the short time
+    /// limit. Safe off the main thread.
+    nonisolated static func current(pid: pid_t) -> CursorSpot? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, timeLimit)
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
         return spot(for: focused as! AXUIElement)
     }

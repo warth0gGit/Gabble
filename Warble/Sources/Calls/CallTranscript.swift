@@ -24,7 +24,8 @@ struct CallTranscript: Equatable {
 
     /// Labels that aren't real names.
     static func isPlaceholder(_ speaker: String) -> Bool {
-        speaker == "Me" || speaker == "Others" || speaker.hasPrefix("Speaker ")
+        // "Jordan?" is only Warble's guess: not a person to file by or link to.
+        speaker == "Me" || speaker == "Others" || speaker.hasPrefix("Speaker ") || speaker.hasSuffix("?")
     }
 
     /// Everyone else on the call by name: invitees and recognised voices.
