@@ -86,6 +86,8 @@ final class InFieldIndicator {
     /// The ball's largest radius (swelling, its dark edge or the tidying ring),
     /// so even at its biggest it never grows into your text.
     nonisolated static let reach: CGFloat = 9.5
+    /// How far inside the box the ball sits when the cursor isn't known.
+    nonisolated static let inset: CGFloat = 12
 
     /// The ball's center, in Accessibility coordinates (top-left origin), from
     /// the focused text box and the cursor. Nil when Warble can't tell where
@@ -94,11 +96,12 @@ final class InFieldIndicator {
     ///   box has room.
     /// - Just under the cursor when it's mid-sentence or at the box's right
     ///   edge, so it never covers your words.
-    /// - No usable cursor: top right inside the box, or just outside its right
-    ///   edge when the box is a thin single line.
+    /// - No usable cursor: where an empty box's cursor sits, at the start of
+    ///   its first line (left inside the box), so it never looks parked at
+    ///   the far end.
     nonisolated static func ballCenter(field: CGRect?, caret: CGRect?, textAfter: Bool) -> CGPoint? {
         let field = field.flatMap { $0.width >= 60 && $0.height >= 14 ? $0 : nil }
-        var caret = caret.flatMap { $0.height >= 4 && $0.height < 200 ? $0 : nil }
+        var caret = caret.flatMap { CursorLocator.isCaret($0) ? $0 : nil }
         // Some web apps report a cursor at the top-left of the screen: ignore one outside the box.
         if let box = field, let spot = caret, !box.insetBy(dx: -24, dy: -24).contains(CGPoint(x: spot.maxX, y: spot.midY)) {
             caret = nil
@@ -110,8 +113,8 @@ final class InFieldIndicator {
             return CGPoint(x: caret.maxX, y: caret.maxY + 2 + reach)
         }
         if let field {
-            if field.height < 36 { return CGPoint(x: field.maxX + gap + reach, y: field.midY) }
-            return CGPoint(x: field.maxX - 12 - reach, y: field.minY + 12 + reach)
+            let x = field.minX + inset + reach
+            return CGPoint(x: x, y: field.height < 36 ? field.midY : field.minY + inset + reach)
         }
         return nil
     }

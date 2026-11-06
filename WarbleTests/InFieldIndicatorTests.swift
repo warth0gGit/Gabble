@@ -24,13 +24,24 @@ final class InFieldIndicatorTests: XCTestCase {
                        CGPoint(x: 690, y: 726 + 2 + reach))
     }
 
-    func testNoCursorUsesTheBoxTopRightOrBesideAThinBox() {
+    func testNoCursorUsesTheStartOfTheBoxNotTheFarEnd() {
+        // Where an empty box's cursor is: the left of its first line.
         let tall = CGRect(x: 0, y: 50, width: 800, height: 120)
         XCTAssertEqual(InFieldIndicator.ballCenter(field: tall, caret: nil, textAfter: false),
-                       CGPoint(x: 800 - 12 - reach, y: 50 + 12 + reach))
+                       CGPoint(x: 12 + reach, y: 50 + 12 + reach))
         let thin = CGRect(x: 0, y: 50, width: 400, height: 24)
         XCTAssertEqual(InFieldIndicator.ballCenter(field: thin, caret: nil, textAfter: false),
-                       CGPoint(x: 400 + gap + reach, y: 62))
+                       CGPoint(x: 12 + reach, y: 62))
+    }
+
+    func testACursorAsWideAsTheBoxIsIgnored() {
+        // Some web apps answer "where's the cursor" with the whole box.
+        let box = CGRect(x: 100, y: 700, width: 600, height: 40)
+        XCTAssertEqual(InFieldIndicator.ballCenter(field: box, caret: box, textAfter: false),
+                       CGPoint(x: 100 + 12 + reach, y: 700 + 12 + reach))
+        XCTAssertFalse(CursorLocator.isCaret(box))
+        XCTAssertFalse(CursorLocator.isCaret(.zero))
+        XCTAssertTrue(CursorLocator.isCaret(CGRect(x: 300, y: 710, width: 0, height: 16)))
     }
 
     func testACursorOutsideTheBoxIsIgnored() {
@@ -38,7 +49,7 @@ final class InFieldIndicatorTests: XCTestCase {
         let box = CGRect(x: 400, y: 600, width: 500, height: 120)
         let bogus = CGRect(x: 0, y: 0, width: 0, height: 16)
         XCTAssertEqual(InFieldIndicator.ballCenter(field: box, caret: bogus, textAfter: false),
-                       CGPoint(x: 900 - 12 - reach, y: 600 + 12 + reach))
+                       CGPoint(x: 400 + 12 + reach, y: 600 + 12 + reach))
     }
 
     func testNothingKnownMeansTheBottomOfTheScreen() {
