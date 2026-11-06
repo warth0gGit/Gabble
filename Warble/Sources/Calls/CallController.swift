@@ -136,6 +136,11 @@ final class CallController: ObservableObject {
     /// Who on file each unnamed voice sounded a bit like at its last check,
     /// so "Who's this?" can wait for a recheck that may well name it.
     private var checkCandidates: [String: [(name: String, distance: Float)]] = [:]
+    /// What the live voice checks decided, and what you did, in order, saved
+    /// with the call's voice log so a real call can be replayed.
+    private var decisions: [VoiceLog.Decision] = []
+    /// Voices already logged as waiting at their current check, so "wait" is logged once per check.
+    private var loggedWaits: Set<String> = []
     /// A voice nobody recognised is compared again once it has said this
     /// much: five seconds of someone is often too little to know them by,
     /// and each extra stretch of speech makes them easier to tell apart
@@ -307,6 +312,8 @@ final class CallController: ObservableObject {
         voicesBeingChecked = []
         checkedAtTalk = [:]
         checkCandidates = [:]
+        decisions = []
+        loggedWaits = []
         askingWho = nil
         panelMinimized = false
         savedStats = nil
@@ -483,6 +490,7 @@ final class CallController: ObservableObject {
         let guesses = namesThisCall.filter { guessedIDs.contains($0.key) }
         let namedLive = Set(namesThisCall.filter { nameConfidence[$0.key] == .confirmed }.values.map { $0.lowercased() })
         let checked = voicesChecked
+        let callDecisions = decisions
         lastNaming = nil
         askTimeout?.cancel()
         recorder.onVoices = { segments in heard.splitter.add(segments) }
@@ -613,7 +621,8 @@ final class CallController: ObservableObject {
         }
         // What the voice checks heard and decided, kept with the recordings.
         VoiceLog(live: heard.splitter.segments, liveNames: liveNames, review: reviewHeard, names: names,
-                 settings: VoiceLog.currentSettings, learned: learnedAtSave).save(in: recorder.folder)
+                 settings: VoiceLog.currentSettings, learned: learnedAtSave,
+                 decisions: callDecisions.isEmpty ? nil : callDecisions).save(in: recorder.folder)
         // Your mic picks up the others through your speakers; drop those echoes.
         finished.segments = EchoFilter.removeEchoes(from: finished.segments)
         finished.relabel { [self] segment in label(for: segment, voices: voicesHeard, names: names) }
@@ -976,9 +985,11 @@ final class CallController: ObservableObject {
                     self.checkCandidates[id] = VoiceMatcher.candidates(print, known: known)
                 }
                 let undecided = self.namesThisCall[id] == nil || self.nameConfidence[id] == .tentative
-                if let embedding, undecided, self.checkedAtTalk[id] != .infinity,
-                   let guess = VoiceMatcher.guessInCall(embedding, onCall: onCall, saved: known, heard: heardSoFar),
-                   guess.confidence != .tentative || !self.nameTaken(guess.name, except: id) {
+                let guess = embedding.flatMap { VoiceMatcher.guessInCall($0, onCall: onCall, saved: known, heard: heardSoFar) }
+                let taken = guess.map { $0.confidence == .tentative && self.nameTaken($0.name, except: id) } ?? false
+                self.log(taken ? "check-name-taken" : "check", voice: id, name: guess?.name,
+                         distance: guess?.distance, confidence: guess?.confidence)
+                if undecided, self.checkedAtTalk[id] != .infinity, let guess, !taken {
                     if guess.confidence != .tentative { self.dropGuesses(of: guess.name, except: [id]) }
                     self.namesThisCall[id] = guess.name
                     self.nameConfidence[id] = guess.confidence
@@ -995,13 +1006,21 @@ final class CallController: ObservableObject {
         guard isRecording, askingWho == nil, !askingPaused else { return }
         let talk = SpeakerAssigner.talkTime(voiceSegments)
         let firstHeard = voiceSegments.map(\.speakerID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        guard let id = firstHeard.first(where: {
+        let unnamed = firstHeard.filter {
             namesThisCall[$0] == nil && voicesChecked.contains($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
-                // Sounds a bit like someone on file, and is rechecked soon: give that check a chance first.
-                && !VoiceMatcher.shouldWaitBeforeAsking(candidates: checkCandidates[$0] ?? [], talk: talk[$0] ?? 0,
-                                                        lastChecked: checkedAtTalk[$0], rechecks: Self.recheckAfter)
-        }) else { return }
-        ask(about: id)
+        }
+        for id in unnamed {
+            // Sounds a bit like someone on file, and is rechecked soon: give that check a chance first.
+            if VoiceMatcher.shouldWaitBeforeAsking(candidates: checkCandidates[id] ?? [], talk: talk[id] ?? 0,
+                                                   lastChecked: checkedAtTalk[id], rechecks: Self.recheckAfter) {
+                if loggedWaits.insert("\(id)@\(checkedAtTalk[id] ?? 0)").inserted {
+                    logDecision("wait", voice: id, name: checkCandidates[id]?.first?.name, distance: checkCandidates[id]?.first?.distance)
+                }
+                continue
+            }
+            ask(about: id)
+            return
+        }
     }
 
     /// Shows "Who's this?" for a voice, then fills in one-tap suggestions:
@@ -1009,6 +1028,7 @@ final class CallController: ObservableObject {
     /// when the voices really are close) someone already on this call.
     private func ask(about id: String, excluding excluded: String? = nil) {
         let hint = nameHint(for: id).flatMap { $0.caseInsensitiveCompare(excluded ?? "") == .orderedSame ? nil : $0 }
+        logDecision("ask", voice: id, name: hint)
         askingWho = UnknownVoice(speakerID: id, sample: sample(for: id), hint: hint,
                                  suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []))
         restartAskTimeout()
@@ -1089,6 +1109,7 @@ final class CallController: ObservableObject {
     /// (joins the new voice to that voice on this call).
     func choose(_ suggestion: NameSuggestion) {
         if let other = suggestion.joins, let name = namesThisCall[other] {
+            if let asking = askingWho { logDecision("joined", voice: asking.speakerID, name: name) }
             nameVoice(name)
         } else {
             nameVoice(suggestion.name)
@@ -1113,6 +1134,15 @@ final class CallController: ObservableObject {
         assign(guessed.sorted(), name: name, learnFrom: latest)
     }
 
+    /// Adds a line to this call's decision log.
+    private func logDecision(_ event: String, voice: String, name: String? = nil, distance: Float? = nil,
+                     confidence: NameConfidence? = nil) {
+        guard isRecording else { return }
+        let at = recordingStarted.map { Date().timeIntervalSince($0) } ?? 0
+        decisions.append(VoiceLog.Decision(at: at, voice: voice, event: event, name: name, distance: distance,
+                                           confidence: confidence))
+    }
+
     /// Whether a voice other than `id` already shows `name`, sure or guessed.
     /// A guess ("Matt?") may only go to one voice, and never next to a voice
     /// that is Matt for sure: that would show two Matts for one person.
@@ -1135,6 +1165,7 @@ final class CallController: ObservableObject {
     private func assign(_ ids: [String], name: String, learnFrom: String) {
         var naming = Naming(voiceIDs: ids, name: name, previousNames: [:], previousConfidence: [:], learned: nil)
         for id in ids {
+            logDecision("named", voice: id, name: name, confidence: .confirmed)
             naming.previousNames[id] = namesThisCall[id]
             naming.previousConfidence[id] = nameConfidence[id]
             namesThisCall[id] = name
@@ -1171,6 +1202,7 @@ final class CallController: ObservableObject {
         guard let naming = lastNaming else { return }
         lastNaming = nil
         for id in naming.voiceIDs {
+            logDecision("undone", voice: id, name: naming.name)
             namesThisCall[id] = naming.previousNames[id]
             nameConfidence[id] = naming.previousConfidence[id]
         }
@@ -1262,6 +1294,7 @@ final class CallController: ObservableObject {
     func deferVoice() {
         guard let asking = askingWho else { return }
         askTimeout?.cancel()
+        logDecision(askingPaused ? "paused" : "skipped", voice: asking.speakerID)
         skippedVoices.insert(asking.speakerID)
         deferredVoices.insert(asking.speakerID)
         askingWho = nil
