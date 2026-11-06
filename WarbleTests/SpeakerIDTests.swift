@@ -387,6 +387,20 @@ final class ChunkAndGapTests: XCTestCase {
         XCTAssertEqual(EngineClock.callTime(5, gaps: []), 5)
     }
 
+    func testSpeechAcrossAGapIsCutInTwo() {
+        let gaps = [EngineClock.Gap(at: 20, extra: 4), EngineClock.Gap(at: 50, extra: 5)]
+        func flat(_ p: [(start: TimeInterval, end: TimeInterval)]) -> [TimeInterval] { p.flatMap { [$0.start, $0.end] } }
+        XCTAssertEqual(flat(EngineClock.pieces(start: 15, end: 25, gaps: gaps)), [15, 20, 24, 29],
+                       "one person talking across the gap: two pieces, not one covering the silence")
+        XCTAssertEqual(flat(EngineClock.pieces(start: 15, end: 55, gaps: gaps)), [15, 20, 24, 54, 59, 64])
+        XCTAssertEqual(flat(EngineClock.pieces(start: 20, end: 30, gaps: gaps)), [24, 34], "starting at the gap")
+        XCTAssertEqual(flat(EngineClock.pieces(start: 10, end: 20, gaps: gaps)), [10, 20], "ending at the gap")
+        XCTAssertEqual(flat(EngineClock.pieces(start: 1, end: 5, gaps: [])), [1, 5])
+        XCTAssertTrue(EngineClock.pieces(start: 5, end: 5, gaps: gaps).isEmpty)
+        let talk = EngineClock.pieces(start: 15, end: 25, gaps: gaps).reduce(0) { $0 + $1.end - $1.start }
+        XCTAssertEqual(talk, 10, accuracy: 1e-9, "the gap doesn't count as talk")
+    }
+
     func testSilenceGoesInOneSecondPiecesAndLongGapsAreCapped() {
         XCTAssertEqual(AudioGap.pieces(120_000, sampleRate: 48_000), [48_000, 48_000, 24_000])
         XCTAssertEqual(AudioGap.pieces(48_000, sampleRate: 48_000), [48_000])

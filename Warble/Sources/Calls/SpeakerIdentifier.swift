@@ -527,6 +527,23 @@ enum EngineClock {
         time + gaps.filter { isEnd ? $0.at < time : $0.at <= time }.reduce(0) { $0 + $1.extra }
     }
 
+    /// A stretch of engine audio as call-time pieces, cut wherever a gap
+    /// falls inside it. The engine hears the audio either side of a gap joined
+    /// up (one person talking across an AirPods switch), so without the cut
+    /// one stretch would cover the silence too and count as up to a minute
+    /// more talk. Each piece keeps the same voice and fingerprint.
+    static func pieces(start: TimeInterval, end: TimeInterval, gaps: [Gap]) -> [(start: TimeInterval, end: TimeInterval)] {
+        guard end > start else { return [] }
+        var out: [(start: TimeInterval, end: TimeInterval)] = []
+        var from = start
+        for gap in gaps where gap.at > start && gap.at < end {
+            out.append((callTime(from, gaps: gaps), callTime(gap.at, gaps: gaps, isEnd: true)))
+            from = gap.at
+        }
+        out.append((callTime(from, gaps: gaps), callTime(end, gaps: gaps, isEnd: true)))
+        return out
+    }
+
     /// `gaps` with another `extra` seconds at `at` (joined to the last gap if
     /// no audio came between them).
     static func adding(_ extra: TimeInterval, at: TimeInterval, to gaps: [Gap]) -> [Gap] {
@@ -720,13 +737,13 @@ final class SpeakerIdentifier: @unchecked Sendable {
             guard let result = try? diarizer.performCompleteDiarization(chunk, atTime: offset) else { return }
             // Engine times -> call times: skip the repeated end-of-call filler
             // and move voices after a gap on by the gap's length.
-            let segments = result.segments.compactMap { s -> VoiceSegment? in
+            let segments = result.segments.flatMap { s -> [VoiceSegment] in
                 let start = Double(s.startTimeSeconds), end = min(Double(s.endTimeSeconds), realEnd)
-                guard start < realEnd, end > start else { return nil }
-                return VoiceSegment(speakerID: s.speakerId,
-                                    start: base + EngineClock.callTime(start, gaps: gaps),
-                                    end: base + EngineClock.callTime(end, gaps: gaps, isEnd: true),
-                                    embedding: s.embedding)
+                guard start < realEnd, end > start else { return [] }
+                return EngineClock.pieces(start: start, end: end, gaps: gaps).map { piece in
+                    VoiceSegment(speakerID: s.speakerId, start: base + piece.start, end: base + piece.end,
+                                 embedding: s.embedding)
+                }
             }
             guard !segments.isEmpty else { return }
             Task { @MainActor in onSegments?(segments) }
