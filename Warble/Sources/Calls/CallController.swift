@@ -35,6 +35,12 @@ final class CallController: ObservableObject {
         /// The voice Warble is asking about ("Who's this?").
         var isNew = false
         var isSpeaking = false
+        /// The full name behind the chip's short one ("Jordan Smith").
+        var fullName: String? = nil
+        /// Warble is guessing: shown as "Jordan?".
+        var isTentative = false
+        /// Voices that sound different but share this name ("Jordan ×2"); 1 normally.
+        var shared = 1
     }
     /// You, then everyone heard on the other side, with who's talking now.
     @Published private(set) var liveSpeakers: [LiveSpeaker] = []
@@ -78,8 +84,37 @@ final class CallController: ObservableObject {
         var sample: String
         /// A name said around when they started talking ("Thanks, Matt"), offered as a suggestion.
         var hint: String? = nil
+        /// One-tap answers, best first (see `NameSuggestion.build`).
+        var suggestions: [NameSuggestion] = []
+        /// When Warble started asking, so the pill only pulses for a moment.
+        var askedAt = Date()
     }
     @Published private(set) var askingWho: UnknownVoice?
+    /// How sure Warble is of each voice's name on this call. A `.tentative`
+    /// name shows as "Jordan?" and is never learned until you confirm it.
+    @Published private(set) var nameConfidence: [String: NameConfidence] = [:]
+    /// The last name you gave on this call, so it can be undone (and what
+    /// Warble learned from it taken back out) until you name someone else.
+    struct Naming: Equatable {
+        var id = UUID()
+        var voiceIDs: [String]
+        var name: String
+        var previousNames: [String: String]
+        var previousConfidence: [String: NameConfidence]
+        /// The voice recording Warble learned from this naming, once saved.
+        var learned: UUID?
+    }
+    @Published private(set) var lastNaming: Naming?
+    /// Namings undone before Warble finished learning from them.
+    private var undoneNamings: Set<UUID> = []
+    /// Voices you said to ask about after the call instead.
+    @Published private(set) var deferredVoices: Set<String> = []
+    /// "Don't ask during this call."
+    @Published private(set) var askingPaused = false
+    /// Turns an unanswered "Who's this?" into "ask me after the call".
+    private var askTimeout: Task<Void, Never>?
+    /// How long "Who's this?" waits for an answer before moving on.
+    static let askTimeoutSeconds: TimeInterval = 60
     /// Voices Warble has learned, kept between calls.
     let voices = VoiceprintStore()
     /// Every stretch of the other side's speech this call, checked so people
@@ -138,9 +173,8 @@ final class CallController: ObservableObject {
             .store(in: &cancellables)
         $askingWho
             .receive(on: RunLoop.main)
-            .sink { [weak self] asking in
-                // A new voice always opens the full card, even if it was shrunk.
-                if asking != nil { self?.panelMinimized = false }
+            .sink { [weak self] _ in
+                // A shrunk card stays shrunk: the pill says "Who's this?" instead.
                 self?.updatePanel()
             }
             .store(in: &cancellables)
@@ -242,6 +276,12 @@ final class CallController: ObservableObject {
         recorder.onVoices = { [weak self] segments in self?.heard(segments) }
         splitter = VoiceSplitter()
         namesThisCall = [:]
+        nameConfidence = [:]
+        lastNaming = nil
+        undoneNamings = []
+        deferredVoices = []
+        askingPaused = false
+        askTimeout?.cancel()
         skippedVoices = []
         voicesChecked = []
         voicesBeingChecked = []
@@ -298,8 +338,29 @@ final class CallController: ObservableObject {
             meTalking: recorder.meMeter.isSpeaking(),
             meLevel: recorder.meMeter.level, meThreshold: recorder.meMeter.threshold,
             othersTalking: recorder.othersMeter.isSpeaking(),
-            voices: voiceSegments, asking: askingWho?.speakerID, name: { [self] in voiceName($0) })
+            voices: voiceSegments, asking: askingWho?.speakerID, name: { [self] in voiceName($0) },
+            confidence: nameConfidence, conflicted: conflictedNames())
         if updated != liveSpeakers { liveSpeakers = updated }
+    }
+
+    /// Names (lowercased) that two clearly different voices share on this
+    /// call, e.g. AJ and Matt both matched to Jordan. Voices you joined
+    /// yourself don't count.
+    private func conflictedNames() -> Set<String> {
+        var groups: [String: [String]] = [:]
+        for (id, name) in namesThisCall { groups[name.lowercased(), default: []].append(id) }
+        var conflicted = Set<String>()
+        for (name, ids) in groups where ids.count > 1 {
+            guard !ids.allSatisfy({ nameConfidence[$0] == .confirmed }) else { continue }
+            let prints = ids.compactMap { splitter.fingerprint(for: $0) }
+            outer: for i in prints.indices {
+                for j in prints.indices where j > i && VoiceMatcher.distance(prints[i], prints[j]) > VoiceMatcher.tentativeDistance {
+                    conflicted.insert(name)
+                    break outer
+                }
+            }
+        }
+        return conflicted
     }
 
     /// The speaker chips. Pure, so it can be tested.
@@ -311,7 +372,9 @@ final class CallController: ObservableObject {
     ///   which runs a few seconds behind; the most recently heard voice is shown.
     static func liveSpeakers(meTalking: Bool, meLevel: Double, meThreshold: Double, othersTalking: Bool,
                              voices: [VoiceSegment], asking: String?,
-                             name: (String) -> String) -> [LiveSpeaker] {
+                             name: (String) -> String,
+                             confidence: [String: NameConfidence] = [:],
+                             conflicted: Set<String> = []) -> [LiveSpeaker] {
         let youTalking = meTalking && !(othersTalking && meLevel < meThreshold * 3)
         var list = [LiveSpeaker(id: "you", name: "You", isYou: true, isSpeaking: youTalking)]
         let talk = SpeakerAssigner.talkTime(voices)
@@ -346,9 +409,14 @@ final class CallController: ObservableObject {
         let latestName = latest.map(name)
         let short = chipNames(order.map(name))
         for id in shown {
-            list.append(LiveSpeaker(id: id, name: id == asking ? "New voice" : short[name(id)] ?? name(id),
+            let full = name(id)
+            let sameName = order.filter { $0 != asking && name($0).lowercased() == full.lowercased() }
+            list.append(LiveSpeaker(id: id, name: id == asking ? "New voice" : short[full] ?? full,
                                     isNew: id == asking,
-                                    isSpeaking: othersTalking && (id == latest || (id != asking && name(id) == latestName && latest != asking))))
+                                    isSpeaking: othersTalking && (id == latest || (id != asking && full == latestName && latest != asking)),
+                                    fullName: id == asking ? nil : full,
+                                    isTentative: id != asking && sameName.contains { confidence[$0] == .tentative },
+                                    shared: id != asking && conflicted.contains(full.lowercased()) ? max(2, sameName.count) : 1))
         }
         let hidden = Set(order.filter { !shown.contains($0) }.map { name($0).lowercased() })
             .subtracting(shown.map { name($0).lowercased() })
@@ -386,8 +454,15 @@ final class CallController: ObservableObject {
         self.recorder = nil
         stopSpeakerMeter()
         let heard = VoiceBox(splitter)
-        var names = namesThisCall
+        // Guesses ("Jordan?") are never learned, never attract other voices
+        // and aren't handed to the review; they only label the transcript
+        // when there's no review to go by.
+        let guessedIDs = Set(nameConfidence.filter { $0.value == .tentative }.map(\.key))
+        var names = namesThisCall.filter { !guessedIDs.contains($0.key) }
+        let guesses = namesThisCall.filter { guessedIDs.contains($0.key) }
         let checked = voicesChecked
+        lastNaming = nil
+        askTimeout?.cancel()
         recorder.onVoices = { segments in heard.splitter.add(segments) }
         recorder.onUpdate = nil
         let callMeeting = meeting
@@ -439,7 +514,7 @@ final class CallController: ObservableObject {
                     onCall.append(Voiceprint(name: name, embedding: other))
                 }
             }
-            for id in Set(voicesHeard.map(\.speakerID)) where names[id] == nil && !checked.contains(id) && (talk[id] ?? 0) >= 3 {
+            for id in Set(voicesHeard.map(\.speakerID)) where names[id] == nil && !checked.contains(id) && !guessedIDs.contains(id) && (talk[id] ?? 0) >= 3 {
                 guard let embedding = await Self.fingerprint(id, heard.splitter, recorder.speakers) else { continue }
                 if let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: []) {
                     names[id] = name
@@ -496,6 +571,10 @@ final class CallController: ObservableObject {
                   let print = reviewPrints?[id] ?? heard.splitter.callPrint(of: name, names: liveNames) else { continue }
             learned.insert(name.lowercased())
             voices.reinforce(name: name, embedding: print)
+        }
+        // With no review, a guessed voice keeps its guess in the transcript, marked "?".
+        if reviewHeard == nil {
+            for (id, name) in guesses where names[id] == nil { names[id] = name + "?" }
         }
         // What the voice checks heard and decided, kept with the recordings.
         VoiceLog(live: heard.splitter.segments, liveNames: liveNames, review: reviewHeard, names: names,
@@ -612,8 +691,10 @@ final class CallController: ObservableObject {
         askAboutNextUnknownVoice()
     }
 
+    /// Named, and not just a guess. A guessed ("Jordan?") voice keeps being
+    /// checked as it says more, so the guess can firm up.
     private func isKnown(_ speakerID: String) -> Bool {
-        namesThisCall[speakerID] != nil
+        namesThisCall[speakerID] != nil && nameConfidence[speakerID] != .tentative
     }
 
     /// Once a new voice has said enough, compares it with the people Warble
@@ -633,7 +714,8 @@ final class CallController: ObservableObject {
             guard !voices.voices.isEmpty || !namesThisCall.isEmpty else { voicesChecked.insert(id); continue }
             voicesBeingChecked.insert(id)
             let known = voices.voices
-            let named = namesThisCall
+            // A shaky guess mustn't attract other voices to its name.
+            let named = namesThisCall.filter { nameConfidence[$0.key] != .tentative }
             let prints = splitter
             Task { [weak self] in
                 let embedding = await Self.fingerprint(id, prints, speakers)
@@ -650,11 +732,12 @@ final class CallController: ObservableObject {
                 guard let self else { return }
                 self.voicesBeingChecked.remove(id)
                 self.voicesChecked.insert(id)
-                if let embedding,
-                   let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: known, heard: heardSoFar),
-                   self.namesThisCall[id] == nil {
-                    self.namesThisCall[id] = name
-                    // Recognised now they've said more: no need to ask.
+                let undecided = self.namesThisCall[id] == nil || self.nameConfidence[id] == .tentative
+                if let embedding, undecided, self.checkedAtTalk[id] != .infinity,
+                   let guess = VoiceMatcher.guessInCall(embedding, onCall: onCall, saved: known, heard: heardSoFar) {
+                    self.namesThisCall[id] = guess.name
+                    self.nameConfidence[id] = guess.confidence
+                    // Recognised (or at least a good guess) now they've said more: no need to ask.
                     if self.askingWho?.speakerID == id { self.askingWho = nil }
                     self.refreshLiveSpeakers()
                 }
@@ -664,13 +747,59 @@ final class CallController: ObservableObject {
     }
 
     private func askAboutNextUnknownVoice() {
-        guard isRecording, askingWho == nil else { return }
+        guard isRecording, askingWho == nil, !askingPaused else { return }
         let talk = SpeakerAssigner.talkTime(voiceSegments)
         let firstHeard = voiceSegments.map(\.speakerID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         guard let id = firstHeard.first(where: {
-            !isKnown($0) && voicesChecked.contains($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
+            namesThisCall[$0] == nil && voicesChecked.contains($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
         }) else { return }
-        askingWho = UnknownVoice(speakerID: id, sample: sample(for: id), hint: nameHint(for: id))
+        ask(about: id)
+    }
+
+    /// Shows "Who's this?" for a voice, then fills in one-tap suggestions:
+    /// a name heard said, the people on file it sounds most like, and (only
+    /// when the voices really are close) someone already on this call.
+    private func ask(about id: String, excluding excluded: String? = nil) {
+        let hint = nameHint(for: id).flatMap { $0.caseInsensitiveCompare(excluded ?? "") == .orderedSame ? nil : $0 }
+        askingWho = UnknownVoice(speakerID: id, sample: sample(for: id), hint: hint,
+                                 suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []))
+        restartAskTimeout()
+        guard let speakers = recorder?.speakers else { return }
+        let prints = splitter
+        let known = voices.voices
+        let named = namesThisCall.filter { $0.key != id && nameConfidence[$0.key] != .tentative }
+        Task { [weak self] in
+            guard let embedding = await Self.fingerprint(id, prints, speakers) else { return }
+            var onCall: [(name: String, voiceID: String, distance: Float)] = []
+            for (otherID, name) in named {
+                if let other = await Self.fingerprint(otherID, prints, speakers) {
+                    onCall.append((name, otherID, VoiceMatcher.distance(embedding, other)))
+                }
+            }
+            let onCallNames = Set(named.values.map { $0.lowercased() })
+            let candidates = VoiceMatcher.candidates(embedding, known: known, limit: 3).filter {
+                // Someone already on this call is only offered as "Same person as…".
+                !onCallNames.contains($0.name.lowercased())
+                    && $0.name.caseInsensitiveCompare(excluded ?? "") != .orderedSame
+            }
+            let close = onCall.filter {
+                $0.distance <= VoiceMatcher.tentativeDistance && $0.name.caseInsensitiveCompare(excluded ?? "") != .orderedSame
+            }
+            guard let self, self.askingWho?.speakerID == id else { return }
+            self.askingWho?.suggestions = NameSuggestion.build(hint: hint, candidates: candidates,
+                                                               onCall: close.map { ($0.name, $0.voiceID, $0.distance) })
+        }
+    }
+
+    /// Starts (again) the minute "Who's this?" waits before moving on.
+    func restartAskTimeout() {
+        askTimeout?.cancel()
+        guard let id = askingWho?.speakerID else { return }
+        askTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.askTimeoutSeconds))
+            guard !Task.isCancelled, let self, self.askingWho?.speakerID == id else { return }
+            self.deferVoice()
+        }
     }
 
     /// A name said just before this voice first spoke, or by the voice itself.
@@ -701,47 +830,138 @@ final class CallController: ObservableObject {
     func nameVoice(_ name: String) {
         guard let asking = askingWho else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return skipVoice() }
-        namesThisCall[asking.speakerID] = trimmed
+        guard !trimmed.isEmpty else { return deferVoice() }
         askingWho = nil
-        let speakers = recorder?.speakers
-        let prints = splitter
-        Task { [weak self] in
-            // How this voice sounded on this call, not the engine's blend, so
-            // the right voice is remembered for next time.
-            if let speakers, let embedding = await Self.fingerprint(asking.speakerID, prints, speakers) {
-                self?.voices.remember(name: trimmed, embedding: embedding)
-            }
-            self?.askAboutNextUnknownVoice()
+        askTimeout?.cancel()
+        assign([asking.speakerID], name: trimmed, learnFrom: asking.speakerID)
+    }
+
+    /// A one-tap suggestion on "Who's this?": a name, or "Same person as AJ"
+    /// (joins the new voice to that voice on this call).
+    func choose(_ suggestion: NameSuggestion) {
+        if let other = suggestion.joins, let name = namesThisCall[other] {
+            nameVoice(name)
+        } else {
+            nameVoice(suggestion.name)
         }
     }
 
-    /// While "Who's this?" is showing, clicking someone's chip says the new
-    /// voice is them: the two are joined under that name.
+    /// Kept for older callers: joins the voice being asked about to someone on the call.
     func joinAskingVoice(to speakerID: String) {
         guard let name = namesThisCall[speakerID] else { return }
         nameVoice(name)
     }
 
-    /// Tapping a person's chip: "the person talking now isn't them". Their
-    /// recent speech becomes a voice of its own and Warble asks who it is;
-    /// everything said before keeps the old name, and the new person is
-    /// remembered by their own voice. If there's too little to go on, the
-    /// whole voice is asked about again instead.
+    /// "Yes, it's Jordan" on a "Jordan?" chip: the guess becomes a name you
+    /// gave, and Warble learns the voice.
+    func confirmVoice(_ speakerID: String) {
+        guard isRecording, let name = namesThisCall[speakerID] else { return }
+        let guessed = namesThisCall.filter {
+            $0.value.caseInsensitiveCompare(name) == .orderedSame && nameConfidence[$0.key] == .tentative
+        }.map(\.key)
+        guard !guessed.isEmpty else { return }
+        let latest = voiceSegments.last { guessed.contains($0.speakerID) }?.speakerID ?? guessed[0]
+        assign(guessed.sorted(), name: name, learnFrom: latest)
+    }
+
+    /// Gives `ids` a name you chose, learns the voice (from `learnFrom`) and
+    /// keeps what's needed to undo it.
+    private func assign(_ ids: [String], name: String, learnFrom: String) {
+        var naming = Naming(voiceIDs: ids, name: name, previousNames: [:], previousConfidence: [:], learned: nil)
+        for id in ids {
+            naming.previousNames[id] = namesThisCall[id]
+            naming.previousConfidence[id] = nameConfidence[id]
+            namesThisCall[id] = name
+            nameConfidence[id] = .confirmed
+            skippedVoices.remove(id)
+            deferredVoices.remove(id)
+        }
+        lastNaming = naming
+        refreshLiveSpeakers()
+        let namingID = naming.id
+        let speakers = recorder?.speakers
+        let prints = splitter
+        Task { [weak self] in
+            // How this voice sounded on this call, not the engine's blend, so
+            // the right voice is remembered for next time.
+            if let speakers, let embedding = await Self.fingerprint(learnFrom, prints, speakers),
+               let self, let label = self.voices.remember(name: name, embedding: embedding) {
+                if self.undoneNamings.contains(namingID) {
+                    self.voices.unlearn(label)   // undone while it was being learned
+                } else if self.lastNaming?.id == namingID {
+                    self.lastNaming?.learned = label
+                }
+            }
+            self?.askAboutNextUnknownVoice()
+        }
+    }
+
+    /// Undo for the last name you gave: the voices go back to what they were
+    /// and what Warble learned from it is taken back out. A voice left with
+    /// no name is asked about again.
+    func undoLastNaming() {
+        guard let naming = lastNaming else { return }
+        lastNaming = nil
+        for id in naming.voiceIDs {
+            namesThisCall[id] = naming.previousNames[id]
+            nameConfidence[id] = naming.previousConfidence[id]
+        }
+        if let label = naming.learned { voices.unlearn(label) } else { undoneNamings.insert(naming.id) }
+        refreshLiveSpeakers()
+        if let id = naming.voiceIDs.first(where: { namesThisCall[$0] == nil }), isRecording {
+            askTimeout?.cancel()
+            askingWho = nil
+            ask(about: id, excluding: naming.name)
+        }
+    }
+
+    /// "No, someone else" on a chip: the person talking now isn't them.
+    /// For a guess ("Jordan?"), the whole voice loses the guessed name and
+    /// Warble asks who it is. For a name you gave or Warble was sure of,
+    /// their recent speech becomes a voice of its own and Warble asks who it
+    /// is; everything said before keeps the old name (check it after the
+    /// call). Either way the rejected name isn't suggested.
     func relabelVoice(_ speakerID: String) {
         guard isRecording, !["you", "others", "more"].contains(speakerID) else { return }
         // One person can be several voices; use the one heard most recently.
         let name = voiceName(speakerID)
         let latest = voiceSegments.last { voiceName($0.speakerID) == name }?.speakerID ?? speakerID
-        if let split = splitter.splitRecent(of: latest) {
+        askTimeout?.cancel()
+        askingWho = nil
+        if nameConfidence[latest] == .tentative {
+            namesThisCall[latest] = nil
+            nameConfidence[latest] = nil
+            voicesChecked.insert(latest)
+            checkedAtTalk[latest] = .infinity   // you said who it isn't; ask, don't guess
+            skippedVoices.remove(latest)
+            ask(about: latest, excluding: name)
+        } else if let split = splitter.splitRecent(of: latest) {
             voicesChecked.insert(split)
-            checkedAtTalk[split] = .infinity   // you said who it isn't; ask, don't guess
-            askingWho = UnknownVoice(speakerID: split, sample: sample(for: split), hint: nameHint(for: split))
+            checkedAtTalk[split] = .infinity
+            ask(about: split, excluding: name)
         } else {
-            skippedVoices.remove(speakerID)
-            askingWho = UnknownVoice(speakerID: speakerID, sample: sample(for: speakerID))
+            skippedVoices.remove(latest)
+            ask(about: latest, excluding: name)
         }
         refreshLiveSpeakers()
+    }
+
+    /// "Name the one talking now" on a "Jordan ×2" chip: asks who the voice
+    /// heard most recently under that name is.
+    func askAboutSharedName(_ speakerID: String) {
+        guard isRecording else { return }
+        let name = voiceName(speakerID)
+        guard let latest = voiceSegments.last(where: { voiceName($0.speakerID) == name })?.speakerID else { return }
+        askTimeout?.cancel()
+        askingWho = nil
+        ask(about: latest)
+    }
+
+    /// How long ago a voice last spoke, or nil if Warble can't tell.
+    func secondsSinceHeard(_ speakerID: String) -> TimeInterval? {
+        guard let started = recordingStarted,
+              let end = voiceSegments.filter({ $0.speakerID == speakerID }).map(\.end).max() else { return nil }
+        return max(0, Date().timeIntervalSince(started) - end)
     }
 
     /// A voice's fingerprint from this call: Warble's own (see VoiceSplitter),
@@ -752,11 +972,23 @@ final class CallController: ObservableObject {
         return await speakers.embedding(for: id)
     }
 
-    func skipVoice() {
+    /// "Ask me after the call" (also Esc, or a minute with no answer): this
+    /// voice is named in the after-call check instead.
+    func deferVoice() {
         guard let asking = askingWho else { return }
+        askTimeout?.cancel()
         skippedVoices.insert(asking.speakerID)
+        deferredVoices.insert(asking.speakerID)
         askingWho = nil
         askAboutNextUnknownVoice()
+    }
+
+    func skipVoice() { deferVoice() }
+
+    /// "Don't ask during this call": every voice left is named after the call.
+    func pauseAsking() {
+        askingPaused = true
+        deferVoice()
     }
 
     /// The name to show for a transcript line, using that call's own voices and names.
