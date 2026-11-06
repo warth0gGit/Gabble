@@ -478,7 +478,6 @@ final class CallController: ObservableObject {
         var names = namesThisCall.filter { !guessedIDs.contains($0.key) }
         let guesses = namesThisCall.filter { guessedIDs.contains($0.key) }
         let namedLive = Set(namesThisCall.filter { nameConfidence[$0.key] == .confirmed }.values.map { $0.lowercased() })
-        let learnedLive = liveLearned
         let checked = voicesChecked
         lastNaming = nil
         askTimeout?.cancel()
@@ -638,7 +637,8 @@ final class CallController: ObservableObject {
             ? SpeakerCheck(rows: checkRows, url: URL(fileURLWithPath: "/"), started: finished.started,
                            othersFile: othersRecording?.file, othersOffset: othersRecording?.startOffset ?? 0,
                            voices: voicesHeard, prints: checkPrints, learnedAtSave: learnedAtSave,
-                           learnedLive: learnedLive, savedNames: names)
+                           // Read now, not at Stop, so a name given just before Stop is included.
+                           learnedLive: liveLearned, savedNames: names)
             : nil
         guard !finished.segments.isEmpty else {
             if shownHere {
@@ -1125,7 +1125,7 @@ final class CallController: ObservableObject {
                     self.voices.unlearn(label)   // undone while it was being learned
                 } else {
                     if self.lastNaming?.id == namingID { self.lastNaming?.learned = label }
-                    if self.isRecording { self.liveLearned[name.lowercased(), default: []].append(label) }
+                    self.liveLearned[name.lowercased(), default: []].append(label)
                 }
             }
             self?.askAboutNextUnknownVoice()
