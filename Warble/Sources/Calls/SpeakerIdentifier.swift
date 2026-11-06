@@ -250,12 +250,13 @@ enum VoiceMatcher {
     }
 
     /// How far a voice is from a remembered person: from their average over
-    /// all the calls Warble has heard them on. Measured on the same people
-    /// on calls months apart: going by whichever single recording was
-    /// nearest let about four times as many strangers come within
-    /// `maxDistance` of someone with several recordings (1.1% against 0.24%
-    /// per person on file), while the real person was barely any nearer
-    /// (furthest 0.37 either way). So the average decides.
+    /// all the calls Warble has heard them on. Measured on 6 people on calls
+    /// months apart, each with two recordings on file (a good line and a poor
+    /// one): going by whichever recording was nearest let more strangers come
+    /// within `maxDistance` of them (0.8% against 0.5% per person on a good
+    /// line, 7% against 1.2% on a poor one), while the person themselves was
+    /// only a little nearer (median 0.28 against 0.30; 0.21 against 0.28 on
+    /// a poor line). So the average decides.
     static func distance(_ embedding: [Float], to person: Voiceprint) -> Float {
         distance(embedding, person.embedding)
     }
@@ -276,8 +277,10 @@ enum VoiceMatcher {
     /// still be them. The voice engine has already judged this voice to be
     /// new (further than newVoiceDistance from everyone), so only a clearly
     /// closer match overrules it; a looser value folded a fifth person on a
-    /// big call into one of the first four. Measured: at 0.45 about one
-    /// rejoin in seven was the wrong person; at 0.4 one in thirteen.
+    /// big call into one of the first four. Measured on 12 replayed calls: a
+    /// new voice 0.4-0.45 from someone named on the call was them in 0 of 13
+    /// checks (0.35-0.4: 5 of 8), and 0.4 put a little less speech under a
+    /// wrong name than 0.45 in every condition tried (0.1-0.6 points).
     static let sameCallDistance: Float = 0.4
     /// Naming someone from an earlier call only after this call has ended,
     /// when you never saw them on the card, needs a very close match.
@@ -322,10 +325,11 @@ enum VoiceMatcher {
     /// Someone further than `maxDistance` but within this is shown with a
     /// question mark ("Matt?") rather than named outright or asked about cold.
     /// Measured on calls months apart with 25 people on file: at 0.5 (and a
-    /// 0.1 lead) about 1 newcomer in 20-40 is shown as someone they aren't,
-    /// and a known person heard over a poorer line is shown as "Name?" about
-    /// one time in five instead of being asked about. At 0.55 with a 0.05
-    /// lead it caught a few more, but showed 1 newcomer in 7 as someone else.
+    /// 0.1 lead) 1-4% of newcomers are shown as someone they aren't, and a
+    /// known person heard over a different line quality from the one they
+    /// were learned on is shown as "Name?" 16-19% of the time instead of
+    /// being asked about. At 0.55 with a 0.05 lead (first try) 1 newcomer
+    /// in 7 was shown as someone else.
     static let tentativeDistance: Float = 0.5
     /// …and must still be this much nearer than the next person.
     static let tentativeMargin: Float = 0.1
@@ -399,7 +403,10 @@ enum VoiceMatcher {
     /// by `atMost` seconds of talk; otherwise ask now. A voice that sounds
     /// like nobody is asked about straight away, as before. Pure, unit tested.
     /// - Parameters:
-    ///   - candidates: `candidates(...)` for this voice, from everything it has said so far.
+    ///   - candidates: `candidates(...)` for this voice, from everything it has
+    ///     said so far, against the people on file only. (Waiting because it
+    ///     sounds like someone already on this call only left more speech
+    ///     unnamed: measured, +2.4 to +3.1 points on fresh calls, for nothing.)
     ///   - talk: seconds this voice has talked so far.
     ///   - lastChecked: its talk total when it was last checked (nil: never).
     ///   - rechecks: the talk totals at which a voice is checked again (the controller's `recheckAfter`).
@@ -522,10 +529,13 @@ final class SpeakerIdentifier: @unchecked Sendable {
     /// at 0.6 a man talking for minutes was taken for a woman already named
     /// (and her fingerprint drifted to his voice). Splitting one person into
     /// two is fixable (matchInCall rejoins them, or you rename); a merge isn't.
-    /// Measured on real conference calls squeezed through a phone-quality
-    /// codec (docs: speaker-id technical findings): 0.45 put the least speech
-    /// under a wrong name end to end; 0.5 merged more people, 0.4 split
-    /// people so often that rejoining them went wrong more.
+    /// Measured on 12 real conference calls replayed through the same
+    /// models (docs: speaker-id technical findings): with people already on
+    /// file, 0.45 instead of 0.5 put less speech under a wrong name on 6-7
+    /// of the 12 calls and more on 1-2 (one call went from 77% wrong to 7%:
+    /// a merge avoided), for slightly more unnamed speech (+0.1 to +0.6
+    /// points). On fresh calls it made little difference. 0.55 and 0.6
+    /// were worse everywhere.
     static let newVoiceDistance: Float = 0.45
     /// A voice's fingerprint is only refined with audio this close to it.
     static let refineDistance: Float = 0.3
