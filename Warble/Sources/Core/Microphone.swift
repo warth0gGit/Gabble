@@ -113,10 +113,17 @@ final class MicrophoneCapture: @unchecked Sendable {
     private var generation = 0
     private var buffersSeen = 0
     // Only touched on `queue`.
-    /// One engine for this microphone's whole life, restarted rather than
-    /// replaced (see `keptEngines`).
+    /// The engine in use, restarted rather than replaced while the
+    /// microphone stays the same (see `keptEngines`).
     private var engine: AVAudioEngine?
+    /// The microphone and sample rate `engine` was set up for.
+    private var engineSetup: Setup?
     private var running = false
+
+    private struct Setup: Equatable {
+        var device: AudioDeviceID
+        var sampleRate: Double
+    }
     private var observer: NSObjectProtocol?
     private var handler: Handler?
     private var deviceUID = MicrophoneChoice.systemDefault
@@ -154,32 +161,68 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// crash the app while throwing an audio engine away if its microphone
     /// went missing meanwhile (the Mac slept, or AirPods were put away); that
     /// took Warble down on 5 November. A stopped engine costs very little, so
-    /// none is ever thrown away, and each microphone reuses its own.
+    /// none is ever thrown away.
     private static let keptLock = NSLock()
     nonisolated(unsafe) private static var keptEngines: [AVAudioEngine] = []
 
-    private func reusableEngine() -> AVAudioEngine {
-        if let engine { return engine }
+    /// A new engine. Used whenever the microphone or its sample rate has
+    /// changed (AirPods in or out, or switching to call mode): an engine set
+    /// up for the old one reports the old format, and macOS crashes the app
+    /// when it's started with that (6 November).
+    private func freshEngine(for setup: Setup?) -> AVAudioEngine {
         let made = AVAudioEngine()
         Self.keptLock.lock()
         Self.keptEngines.append(made)
         Self.keptLock.unlock()
         engine = made
+        engineSetup = setup
         return made
+    }
+
+    /// The microphone to use now and its current sample rate.
+    private func currentSetup() -> Setup? {
+        let device = MicrophoneChoice.device(for: deviceUID, in: InputDevices.all())?.id ?? Self.defaultInputDevice()
+        guard let device, let rate = Self.sampleRate(of: device) else { return nil }
+        return Setup(device: device, sampleRate: rate)
+    }
+
+    private func choose(_ engine: AVAudioEngine) {
+        guard let device = MicrophoneChoice.device(for: deviceUID, in: InputDevices.all()),
+              let unit = engine.inputNode.audioUnit else { return }
+        var id = device.id
+        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                             &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+    }
+
+    /// Whether the engine's microphone format agrees with the hardware, as
+    /// macOS insists before recording (otherwise it crashes the app).
+    private static func formatsAgree(_ engine: AVAudioEngine) -> Bool {
+        let input = engine.inputNode
+        let out = input.outputFormat(forBus: 0)
+        let hardware = input.inputFormat(forBus: 0)
+        return out.sampleRate > 0 && out.channelCount > 0 && out.sampleRate == hardware.sampleRate
     }
 
     private func run(generation mine: Int) -> Bool {
         tearDown()
-        let engine = reusableEngine()
-        if let device = MicrophoneChoice.device(for: deviceUID, in: InputDevices.all()),
-           let unit = engine.inputNode.audioUnit {
-            var id = device.id
-            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                 &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+        let setup = currentSetup()
+        var engine: AVAudioEngine
+        if let existing = self.engine, setup != nil, setup == engineSetup {
+            engine = existing
+            choose(engine)
+            if !Self.formatsAgree(engine) {
+                engine = freshEngine(for: setup)
+                choose(engine)
+            }
+        } else {
+            engine = freshEngine(for: setup)
+            choose(engine)
         }
+        // Never record with a format macOS would reject: say the microphone
+        // didn't start (and try again later) rather than crash.
+        guard Self.formatsAgree(engine), let handler else { return false }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0, let handler else { return false }
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self, self.countBuffer(generation: mine) else { return }
             handler(buffer)
@@ -188,9 +231,10 @@ final class MicrophoneCapture: @unchecked Sendable {
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
         ) { [weak self] _ in
             // The microphone changed (AirPods connected, switched mode or were
-            // taken out). The engine has stopped itself; start again on the new one.
+            // taken out). The engine has stopped itself; start again on a new one.
             guard let self else { return }
             self.queue.async {
+                self.engineSetup = nil
                 guard self.isCurrent(mine) else { return }
                 _ = self.run(generation: mine)
             }
@@ -206,6 +250,26 @@ final class MicrophoneCapture: @unchecked Sendable {
         }
         running = true
         return true
+    }
+
+    private static func defaultInputDevice() -> AudioDeviceID? {
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id)
+        return status == noErr && id != 0 ? id : nil
+    }
+
+    private static func sampleRate(of device: AudioDeviceID) -> Double? {
+        var rate = Float64(0)
+        var size = UInt32(MemoryLayout<Float64>.size)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate)
+        return status == noErr && rate > 0 ? rate : nil
     }
 
     /// Stops the microphone; the engine is kept to start again later.
