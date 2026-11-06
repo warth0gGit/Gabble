@@ -20,6 +20,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "warble.system-audio")
     private let onBuffer: @Sendable (AVAudioPCMBuffer) -> Void
+    /// Where the last buffer ended on the capture clock (used on `queue` only).
+    private var lastEnd: TimeInterval?
 
     init(onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) {
         self.onBuffer = onBuffer
@@ -58,7 +60,34 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio, let buffer = Self.pcmBuffer(from: sampleBuffer) else { return }
+        // If the call app sent nothing for a while (it went quiet, or its
+        // sound device changed, e.g. AirPods switching mode), put that much
+        // silence in first. Everything downstream counts time by the amount
+        // of audio, so without it the voices heard after a gap would be
+        // matched to the wrong lines of the transcript.
+        let start = sampleBuffer.presentationTimeStamp.seconds
+        let rate = buffer.format.sampleRate
+        if start.isFinite, rate > 0 {
+            var missing = AudioGap.silentFrames(previousEnd: lastEnd, start: start, sampleRate: rate)
+            while missing > 0, let silence = Self.silence(frames: min(missing, Int(rate)), format: buffer.format) {
+                onBuffer(silence)
+                missing -= Int(silence.frameLength)
+            }
+            lastEnd = start + Double(buffer.frameLength) / rate
+        }
         onBuffer(buffer)
+    }
+
+    /// A stretch of silence in the given format.
+    static func silence(frames: Int, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else {
+            return nil
+        }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        for audio in UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList) {
+            if let data = audio.mData { memset(data, 0, Int(audio.mDataByteSize)) }
+        }
+        return buffer
     }
 
     static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
@@ -72,5 +101,23 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
         let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
             sampleBuffer, at: 0, frameCount: Int32(frames), into: buffer.mutableAudioBufferList)
         return status == noErr ? buffer : nil
+    }
+}
+
+/// How much silence to put in where the call app's audio skipped ahead.
+/// Pure, unit tested.
+enum AudioGap {
+    /// Shorter jumps are ordinary unevenness between buffers.
+    static let minimum: TimeInterval = 0.2
+    /// Longer jumps are taken to be the clock being reset, not silence.
+    static let maximum: TimeInterval = 600
+
+    /// Frames of silence to add before a buffer that starts at `start`
+    /// (seconds on the capture clock), when the previous one ended at `previousEnd`.
+    static func silentFrames(previousEnd: TimeInterval?, start: TimeInterval, sampleRate: Double) -> Int {
+        guard let previousEnd, sampleRate > 0 else { return 0 }
+        let gap = start - previousEnd
+        guard gap >= minimum, gap <= maximum else { return 0 }
+        return Int((gap * sampleRate).rounded())
     }
 }

@@ -141,4 +141,34 @@ enum VoiceReview {
         for (voice, name) in assigned { newNames["review-" + voice] = name }
         return (segments, newNames)
     }
+
+    /// How each of the recording's voices sounded, in the same terms as the
+    /// live check and the people Warble remembers: the live fingerprints of
+    /// the stretches that fall inside that voice's turns, weighted by length.
+    /// The recording separates people better than the live check, so this is
+    /// a cleaner picture of each person than the live voices give, both for
+    /// knowing them and for learning their voice. Voices with less than
+    /// `atLeast` seconds of clear speech are left out.
+    static func prints(review: [VoiceSegment], live: [VoiceSegment],
+                       atLeast seconds: TimeInterval = 15) -> [String: [Float]] {
+        var sums: [String: [Float]] = [:]
+        var totals: [String: TimeInterval] = [:]
+        for l in live where !l.embedding.isEmpty && l.end - l.start >= VoiceSplitter.judgeSeconds {
+            var inside: [String: TimeInterval] = [:]
+            for r in review {
+                let overlap = min(r.end, l.end) - max(r.start, l.start)
+                if overlap > 0 { inside[r.speakerID, default: 0] += overlap }
+            }
+            // Only a live stretch that's almost all one of the recording's voices.
+            guard let best = inside.max(by: { $0.value < $1.value }),
+                  best.value >= 0.8 * (l.end - l.start) else { continue }
+            let unit = VoiceSplitter.unit(l.embedding)
+            var sum = sums[best.key] ?? [Float](repeating: 0, count: unit.count)
+            guard sum.count == unit.count else { continue }
+            for i in sum.indices { sum[i] += unit[i] * Float(best.value) }
+            sums[best.key] = sum
+            totals[best.key, default: 0] += best.value
+        }
+        return sums.filter { (totals[$0.key] ?? 0) >= seconds }.mapValues { VoiceSplitter.unit($0) }
+    }
 }

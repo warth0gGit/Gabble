@@ -22,6 +22,10 @@ struct Voiceprint: Codable, Identifiable, Equatable {
     /// varies from call to call, so one recording of someone isn't enough to
     /// know them again; several are. Nil for voices saved before build 40.
     var samples: [[Float]]? = nil
+    /// A label for each of `samples`, in the same order, so one recording can
+    /// be taken back out again (when you undo a name). Nil for voices saved
+    /// before build 43; labels are made up for those when first needed.
+    var sampleIDs: [UUID]? = nil
 
     /// Every recording of them Warble keeps.
     var prints: [[Float]] {
@@ -32,14 +36,55 @@ struct Voiceprint: Codable, Identifiable, Equatable {
     /// The most recordings of one person kept; the oldest goes first.
     static let maxSamples = 8
 
-    /// Adds how they sounded on another call.
-    mutating func learn(_ print: [Float]) {
-        guard !print.isEmpty, embedding.isEmpty || print.count == embedding.count else { return }
-        var kept = embedding.isEmpty ? [] : prints
-        kept.append(print)
+    /// Adds how they sounded on another call. Returns the new recording's
+    /// label (to undo it with `unlearn`), or nil if it couldn't be added.
+    @discardableResult
+    mutating func learn(_ print: [Float]) -> UUID? {
+        guard !print.isEmpty, embedding.isEmpty || print.count == embedding.count else { return nil }
+        var kept = embedding.isEmpty ? [] : labelled()
+        let label = UUID()
+        kept.append((label, print))
         if kept.count > Self.maxSamples { kept.removeFirst(kept.count - Self.maxSamples) }
-        samples = kept
-        embedding = Self.average(kept)
+        set(kept)
+        return label
+    }
+
+    /// Takes one recording back out. False if they don't have it, or it's the
+    /// only one left (then forget the whole voice instead).
+    @discardableResult
+    mutating func unlearn(_ label: UUID) -> Bool {
+        var kept = labelled()
+        guard kept.count > 1, let index = kept.firstIndex(where: { $0.id == label }) else { return false }
+        kept.remove(at: index)
+        set(kept)
+        return true
+    }
+
+    /// Whether one of their recordings has this label.
+    func has(_ label: UUID) -> Bool {
+        sampleIDs?.contains(label) ?? false
+    }
+
+    /// Takes in every recording of someone else (the same person under
+    /// another name), keeping the newest if there are too many.
+    mutating func absorb(_ other: Voiceprint) {
+        guard other.embedding.count == embedding.count || embedding.isEmpty else { return }
+        var kept = labelled() + other.labelled()
+        if kept.count > Self.maxSamples { kept.removeFirst(kept.count - Self.maxSamples) }
+        set(kept)
+    }
+
+    /// The recordings with their labels; old voices get labels made up here.
+    func labelled() -> [(id: UUID, print: [Float])] {
+        let all = prints
+        let ids = sampleIDs ?? []
+        return all.enumerated().map { index, print in (index < ids.count ? ids[index] : UUID(), print) }
+    }
+
+    private mutating func set(_ kept: [(id: UUID, print: [Float])]) {
+        samples = kept.map(\.print)
+        sampleIDs = kept.map(\.id)
+        embedding = Self.average(kept.map(\.print))
         updated = Date()
     }
 
@@ -76,32 +121,77 @@ final class VoiceprintStore: ObservableObject {
         }
     }
 
-    func remember(name: String, embedding: [Float]) {
+    /// Remembers how someone you named sounds. Returns a label for this
+    /// recording, so the naming can be undone with `unlearn`.
+    @discardableResult
+    func remember(name: String, embedding: [Float]) -> UUID? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !embedding.isEmpty else { return }
-        if let index = voices.firstIndex(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+        guard !trimmed.isEmpty, !embedding.isEmpty else { return nil }
+        let label: UUID?
+        if let index = position(of: trimmed) {
             // Added to what Warble already knows of them, not in place of it.
-            voices[index].learn(embedding)
+            label = voices[index].learn(embedding)
         } else {
-            voices.append(Voiceprint(name: trimmed, embedding: embedding, samples: [embedding]))
+            let id = UUID()
+            voices.append(Voiceprint(name: trimmed, embedding: embedding, samples: [embedding], sampleIDs: [id]))
+            label = id
         }
         save()
+        return label
     }
 
     /// Someone you named, or Warble clearly recognised, as they sounded on a
     /// whole call. Skipped if it doesn't sound like what's on file for them,
-    /// so one mix-up can't spoil their voice.
-    func reinforce(name: String, embedding: [Float]) {
+    /// so one mix-up can't spoil their voice. Returns the recording's label.
+    @discardableResult
+    func reinforce(name: String, embedding: [Float]) -> UUID? {
         guard !embedding.isEmpty,
-              let index = voices.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }),
-              VoiceMatcher.distance(embedding, to: voices[index]) <= VoiceMatcher.learnDistance else { return }
-        voices[index].learn(embedding)
+              let index = position(of: name),
+              VoiceMatcher.distance(embedding, to: voices[index]) <= VoiceMatcher.learnDistance else { return nil }
+        let label = voices[index].learn(embedding)
+        save()
+        return label
+    }
+
+    /// Undoes `remember` or `reinforce`: that recording is taken back out, so
+    /// a name given by mistake doesn't teach Warble the wrong voice. If it was
+    /// all Warble knew of that person, the person is forgotten.
+    func unlearn(_ label: UUID) {
+        guard let index = voices.firstIndex(where: { $0.has(label) }) else { return }
+        if !voices[index].unlearn(label) {
+            voices.remove(at: index)
+        }
+        save()
+    }
+
+    /// Gives someone a new name. If someone already has that name, they're
+    /// the same person and the two are joined.
+    func rename(from old: String, to new: String) {
+        let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = position(of: old) else { return }
+        if let other = position(of: trimmed), other != index {
+            return merge(old, into: trimmed)
+        }
+        voices[index].name = trimmed
+        save()
+    }
+
+    /// Two names on file are the same person: `source`'s recordings join `target`'s.
+    func merge(_ source: String, into target: String) {
+        guard let from = position(of: source), let to = position(of: target), from != to else { return }
+        voices[to].absorb(voices[from])
+        voices.remove(at: from)
         save()
     }
 
     func forget(_ voice: Voiceprint) {
         voices.removeAll { $0.id == voice.id }
         save()
+    }
+
+    private func position(of name: String) -> Int? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return voices.firstIndex { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
     private func save() {

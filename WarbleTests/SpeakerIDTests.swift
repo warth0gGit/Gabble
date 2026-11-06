@@ -1,0 +1,117 @@
+import XCTest
+@testable import Warble
+
+/// Taking back a name given by mistake, renaming and joining people Warble
+/// knows by voice, without spoiling what it has learned of anyone else.
+final class VoiceUndoTests: XCTestCase {
+    @MainActor
+    private func store() -> (VoiceprintStore, URL) {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        return (VoiceprintStore(fileURL: url), url)
+    }
+
+    @MainActor
+    func testUndoingANameTakesBackOnlyThatRecording() {
+        let (store, url) = store()
+        defer { try? FileManager.default.removeItem(at: url) }
+        store.remember(name: "Matt", embedding: [1, 0, 0])
+        let mistake = store.remember(name: "Matt", embedding: [0, 1, 0])
+        XCTAssertEqual(store.voices.first?.prints.count, 2)
+        store.unlearn(mistake!)
+        XCTAssertEqual(store.voices.first?.prints, [[1, 0, 0]])
+        XCTAssertEqual(store.voices.first?.embedding ?? [], [1, 0, 0])
+        // Kept for next time.
+        XCTAssertEqual(VoiceprintStore(fileURL: url).voices.first?.prints, [[1, 0, 0]])
+    }
+
+    @MainActor
+    func testUndoingTheFirstNameForgetsThePerson() {
+        let (store, url) = store()
+        defer { try? FileManager.default.removeItem(at: url) }
+        store.remember(name: "Jordan", embedding: [1, 0, 0])
+        let first = store.remember(name: "AJ", embedding: [0, 1, 0])
+        store.unlearn(first!)
+        XCTAssertEqual(store.voices.map(\.name), ["Jordan"])
+        store.unlearn(UUID())   // unknown label: nothing happens
+        XCTAssertEqual(store.voices.count, 1)
+    }
+
+    @MainActor
+    func testUndoingAWholeCallRecording() {
+        let (store, url) = store()
+        defer { try? FileManager.default.removeItem(at: url) }
+        store.remember(name: "Jordan", embedding: [1, 0, 0])
+        let learned = store.reinforce(name: "Jordan", embedding: [1, 0.2, 0])
+        XCTAssertNotNil(learned)
+        XCTAssertNil(store.reinforce(name: "Jordan", embedding: [0, 0, 1]), "doesn't sound like him: not learned")
+        store.unlearn(learned!)
+        XCTAssertEqual(store.voices.first?.prints.count, 1)
+    }
+
+    @MainActor
+    func testRenameAndJoin() {
+        let (store, url) = store()
+        defer { try? FileManager.default.removeItem(at: url) }
+        store.remember(name: "Mat", embedding: [1, 0, 0])
+        store.remember(name: "Matt Jones", embedding: [0.9, 0.1, 0])
+        store.remember(name: "Priya", embedding: [0, 0, 1])
+        store.rename(from: "priya", to: "Priya Shah")
+        XCTAssertEqual(Set(store.voices.map(\.name)), ["Mat", "Matt Jones", "Priya Shah"])
+        // Renaming to a name already on file joins the two.
+        store.rename(from: "Mat", to: "matt jones")
+        XCTAssertEqual(Set(store.voices.map(\.name)), ["Matt Jones", "Priya Shah"])
+        XCTAssertEqual(store.voices.first { $0.name == "Matt Jones" }?.prints.count, 2)
+        store.merge("Priya Shah", into: "Nobody")   // no such person: nothing happens
+        XCTAssertEqual(store.voices.count, 2)
+    }
+
+    @MainActor
+    func testRecordingsFromBeforeLabelsCanStillBeUndone() throws {
+        // A voiceprints.json written by build 40 (no labels) or older (no samples).
+        let json = #"[{"id":"7C6B2E4A-1B1C-4F57-9C5E-2D7E2B9C0A11","name":"Shadee","embedding":[1,0,0],"updated":0},"#
+            + #"{"id":"8C6B2E4A-1B1C-4F57-9C5E-2D7E2B9C0A11","name":"Jala","embedding":[0,1,0],"updated":0,"samples":[[0,1,0]]}]"#
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(json.utf8).write(to: url)
+        let store = VoiceprintStore(fileURL: url)
+        XCTAssertEqual(store.voices.count, 2)
+        let added = store.remember(name: "Shadee", embedding: [1, 0.1, 0])
+        XCTAssertEqual(store.voices.first?.prints.count, 2, "the old recording is kept")
+        store.unlearn(added!)
+        XCTAssertEqual(store.voices.first?.prints, [[1, 0, 0]])
+        let jala = store.remember(name: "Jala", embedding: [0.1, 1, 0])
+        store.unlearn(jala!)
+        XCTAssertEqual(store.voices.last?.prints, [[0, 1, 0]])
+    }
+}
+
+final class AudioGapTests: XCTestCase {
+    func testSilenceFillsWhereTheCallAudioSkippedAhead() {
+        XCTAssertEqual(AudioGap.silentFrames(previousEnd: nil, start: 5, sampleRate: 48_000), 0, "first buffer")
+        XCTAssertEqual(AudioGap.silentFrames(previousEnd: 10, start: 10.01, sampleRate: 48_000), 0, "ordinary unevenness")
+        XCTAssertEqual(AudioGap.silentFrames(previousEnd: 10, start: 9.99, sampleRate: 48_000), 0, "overlap")
+        XCTAssertEqual(AudioGap.silentFrames(previousEnd: 10, start: 12.5, sampleRate: 48_000), 120_000)
+        XCTAssertEqual(AudioGap.silentFrames(previousEnd: 10, start: 5000, sampleRate: 48_000), 0, "clock reset, not silence")
+    }
+}
+
+final class ReviewPrintTests: XCTestCase {
+    func testEachRecordingVoiceGetsThePrintsOfTheLiveStretchesInsideIt() {
+        let a: [Float] = [1, 0, 0], b: [Float] = [0, 1, 0]
+        // Live: one voice that was really two people.
+        let live = [
+            VoiceSegment(speakerID: "S1", start: 0, end: 6, embedding: a),
+            VoiceSegment(speakerID: "S1", start: 6, end: 12, embedding: a),
+            VoiceSegment(speakerID: "S1", start: 12, end: 18, embedding: a),
+            VoiceSegment(speakerID: "S1", start: 20, end: 26, embedding: b),
+            VoiceSegment(speakerID: "S1", start: 26, end: 32, embedding: b),
+            VoiceSegment(speakerID: "S1", start: 32, end: 38, embedding: b),
+            VoiceSegment(speakerID: "S1", start: 17, end: 21, embedding: [0, 0, 1]),   // straddles both
+        ]
+        let review = [VoiceSegment(speakerID: "A", start: 0, end: 19), VoiceSegment(speakerID: "B", start: 19, end: 40)]
+        let prints = VoiceReview.prints(review: review, live: live)
+        XCTAssertLessThan(VoiceMatcher.distance(prints["A"] ?? [], a), 0.001)
+        XCTAssertLessThan(VoiceMatcher.distance(prints["B"] ?? [], b), 0.001)
+        XCTAssertTrue(VoiceReview.prints(review: review, live: live, atLeast: 30).isEmpty, "too little speech")
+    }
+}
