@@ -226,11 +226,15 @@ enum VoiceMatcher {
     /// if it's at least this close (so a mix-up doesn't spoil their voice).
     static let learnDistance: Float = 0.5
 
-    /// How far a voice is from a remembered person: the nearest of their
-    /// recordings from past calls, or their average, whichever is closer.
+    /// How far a voice is from a remembered person: from their average over
+    /// all the calls Warble has heard them on. Measured on the same people
+    /// on calls months apart: going by whichever single recording was
+    /// nearest let about four times as many strangers come within
+    /// `maxDistance` of someone with several recordings (1.1% against 0.24%
+    /// per person on file), while the real person was barely any nearer
+    /// (furthest 0.37 either way). So the average decides.
     static func distance(_ embedding: [Float], to person: Voiceprint) -> Float {
-        let each = person.prints.map { distance(embedding, $0) }.min() ?? 2
-        return min(each, distance(embedding, person.embedding))
+        distance(embedding, person.embedding)
     }
 
     /// The name of the remembered person this voice clearly is, or nil.
@@ -290,9 +294,14 @@ enum VoiceMatcher {
 
     /// Someone further than `maxDistance` but within this is shown with a
     /// question mark ("Matt?") rather than named outright or asked about cold.
-    static let tentativeDistance: Float = 0.55
+    /// Measured on calls months apart with 25 people on file: at 0.5 (and a
+    /// 0.1 lead) about 1 newcomer in 20-40 is shown as someone they aren't,
+    /// and a known person heard over a poorer line is shown as "Name?" about
+    /// one time in five instead of being asked about. At 0.55 with a 0.05
+    /// lead it caught a few more, but showed 1 newcomer in 7 as someone else.
+    static let tentativeDistance: Float = 0.5
     /// …and must still be this much nearer than the next person.
-    static let tentativeMargin: Float = 0.05
+    static let tentativeMargin: Float = 0.1
     /// The furthest a person on file can be and still be offered as a one-tap
     /// suggestion on "Who's this?". Beyond this a voice is nearly always
     /// someone else (see docs), so offering them would only mislead.

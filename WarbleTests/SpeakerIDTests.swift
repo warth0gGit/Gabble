@@ -146,7 +146,7 @@ final class VoiceGuessTests: XCTestCase {
 
     func testSureUnsureAndUnknown() {
         XCTAssertEqual(VoiceMatcher.guess(voice(0, distance: 0.2), known: [matt, aj])?.confidence, .recognised)
-        let unsure = VoiceMatcher.guess(voice(0, distance: VoiceMatcher.maxDistance + 0.05), known: [matt, aj])
+        let unsure = VoiceMatcher.guess(voice(0, distance: VoiceMatcher.maxDistance + 0.03), known: [matt, aj])
         XCTAssertEqual(unsure?.name, "Matt")
         XCTAssertEqual(unsure?.confidence, .tentative)
         XCTAssertNil(VoiceMatcher.guess(voice(0, distance: VoiceMatcher.tentativeDistance + 0.05), known: [matt, aj]))
@@ -166,6 +166,18 @@ final class VoiceGuessTests: XCTestCase {
         XCTAssertEqual(drifted?.name, "Jordan")
         XCTAssertEqual(drifted?.confidence, .tentative, "close-ish to Jordan: shown as Jordan?, not named outright")
         XCTAssertNil(VoiceMatcher.guessInCall(voice(5), onCall: onCall, saved: [matt]))
+    }
+
+    func testOneOddRecordingDoesNotMakeAStrangerSoundLikeThem() {
+        // Three calls of Matt, and one recording that was really someone else.
+        var mixedUp = matt
+        mixedUp.learn(voice(0, distance: 0.05))
+        mixedUp.learn(voice(0, distance: 0.05, towards: 6))
+        mixedUp.learn(voice(5))
+        XCTAssertEqual(mixedUp.prints.count, 4)
+        XCTAssertNil(VoiceMatcher.match(voice(5), known: [mixedUp, aj]), "the stranger matches one recording, not Matt")
+        XCTAssertNil(VoiceMatcher.guess(voice(5), known: [mixedUp, aj]))
+        XCTAssertEqual(VoiceMatcher.match(voice(0), known: [mixedUp, aj]), "Matt")
     }
 
     func testMoreSpeechDecidesWhoSomeoneFromAnEarlierCallIs() {
