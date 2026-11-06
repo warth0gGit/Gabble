@@ -94,8 +94,10 @@ final class CallController: ObservableObject {
     /// How much each voice had said when it was last compared.
     private var checkedAtTalk: [String: TimeInterval] = [:]
     /// A voice nobody recognised is compared again once it has said this
-    /// much: five seconds of someone is often too little to know them by.
-    private static let recheckAfter: [TimeInterval] = [15, 40]
+    /// much: five seconds of someone is often too little to know them by,
+    /// and each extra stretch of speech makes them easier to tell apart
+    /// (measured: about 80% of people known at 5 s, 94% at 15 s; see docs).
+    private static let recheckAfter: [TimeInterval] = [8, 12, 20, 30, 45, 60, 90]
     /// How long someone must talk before Warble asks who they are.
     private let askAfterSeconds: TimeInterval = 5
 
@@ -447,20 +449,11 @@ final class CallController: ObservableObject {
                 }
             }
         }
-        // How each person named sounded over this whole call joins what
-        // Warble knows of them, so they're recognised on the next call even if
-        // Teams makes them sound a bit different (one recording wasn't enough).
-        var learned = Set<String>()
-        for id in names.keys.sorted(by: { (talk[$0] ?? 0) > (talk[$1] ?? 0) }) {
-            guard let name = names[id], !learned.contains(name.lowercased()),
-                  let print = heard.splitter.callPrint(for: id) else { continue }
-            learned.insert(name.lowercased())
-            // Only if the voice stayed one person all call.
-            if let anchor = heard.splitter.fingerprint(for: id), VoiceMatcher.distance(print, anchor) > 0.4 { continue }
-            voices.reinforce(name: name, embedding: print)
-        }
         // Go over the whole recording of the other side, which tells people
         // apart better than the live check, and put the names on its voices.
+        var reviewPrints: [String: [Float]]?
+        let liveNames = names
+        var reviewHeard: [VoiceSegment]?
         if let others = recorder.recordings.first(where: { $0.speaker == CallRecorder.othersLabel }) {
             let minutes = finished.duration / 60
             let file = others.file
@@ -475,9 +468,38 @@ final class CallController: ObservableObject {
                                                       fingerprints: found.fingerprints) {
                     voicesHeard = reviewed.segments
                     names = reviewed.names
+                    reviewHeard = reviewed.segments
+                    // Each of the recording's voices, in the same terms as the
+                    // people Warble knows. A voice nobody named that clearly
+                    // is someone from an earlier call gets their name.
+                    let prints = VoiceReview.prints(review: reviewed.segments, live: heard.splitter.segments)
+                    reviewPrints = prints
+                    var used = Set(names.values.map { $0.lowercased() })
+                    for (voice, print) in prints where names[voice] == nil {
+                        if let name = VoiceMatcher.match(print, known: known, within: VoiceMatcher.afterCallDistance),
+                           used.insert(name.lowercased()).inserted {
+                            names[voice] = name
+                        }
+                    }
                 }
             }
         }
+        // How each person named sounded over this whole call joins what
+        // Warble knows of them, so they're recognised on the next call even if
+        // Teams makes them sound a bit different (one recording wasn't enough).
+        // The recording's voices are used when there are any: they keep
+        // people apart better than the live check.
+        var learned = Set<String>()
+        let finalTalk = SpeakerAssigner.talkTime(voicesHeard)
+        for id in names.keys.sorted(by: { (finalTalk[$0] ?? 0) > (finalTalk[$1] ?? 0) }) {
+            guard let name = names[id], !learned.contains(name.lowercased()),
+                  let print = reviewPrints?[id] ?? heard.splitter.callPrint(of: name, names: liveNames) else { continue }
+            learned.insert(name.lowercased())
+            voices.reinforce(name: name, embedding: print)
+        }
+        // What the voice checks heard and decided, kept with the recordings.
+        VoiceLog(live: heard.splitter.segments, liveNames: liveNames, review: reviewHeard, names: names,
+                 settings: VoiceLog.currentSettings).save(in: recorder.folder)
         // Your mic picks up the others through your speakers; drop those echoes.
         finished.segments = EchoFilter.removeEchoes(from: finished.segments)
         finished.relabel { [self] segment in label(for: segment, voices: voicesHeard, names: names) }
@@ -615,6 +637,9 @@ final class CallController: ObservableObject {
             let prints = splitter
             Task { [weak self] in
                 let embedding = await Self.fingerprint(id, prints, speakers)
+                // Everything this voice has said so far, for comparing with
+                // people from earlier calls.
+                let heardSoFar = prints.callPrint(for: id, atLeast: 2)
                 // The people already named on this call, as they sound today.
                 var onCall: [Voiceprint] = []
                 for (otherID, name) in named where otherID != id {
@@ -625,7 +650,8 @@ final class CallController: ObservableObject {
                 guard let self else { return }
                 self.voicesBeingChecked.remove(id)
                 self.voicesChecked.insert(id)
-                if let embedding, let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: known),
+                if let embedding,
+                   let name = VoiceMatcher.matchInCall(embedding, onCall: onCall, saved: known, heard: heardSoFar),
                    self.namesThisCall[id] == nil {
                     self.namesThisCall[id] = name
                     // Recognised now they've said more: no need to ask.

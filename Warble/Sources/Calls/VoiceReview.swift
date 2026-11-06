@@ -3,7 +3,7 @@ import Foundation
 
 /// After a call, the voice engine goes over the whole recording of the other
 /// side in one go. That tells people apart much better than the live check,
-/// which only ever hears six seconds at a time. The names you gave during the
+/// which only ever hears ten seconds at a time. The names you gave during the
 /// call are then put on the right voices (see VoiceReview).
 final class OfflineVoices: @unchecked Sendable {
     static let shared = OfflineVoices()
@@ -140,5 +140,99 @@ enum VoiceReview {
         var newNames: [String: String] = [:]
         for (voice, name) in assigned { newNames["review-" + voice] = name }
         return (segments, newNames)
+    }
+
+    /// How each of the recording's voices sounded, in the same terms as the
+    /// live check and the people Warble remembers: the live fingerprints of
+    /// the stretches that fall inside that voice's turns, weighted by length.
+    /// The recording separates people better than the live check, so this is
+    /// a cleaner picture of each person than the live voices give, both for
+    /// knowing them and for learning their voice. Voices with less than
+    /// `atLeast` seconds of clear speech are left out.
+    static func prints(review: [VoiceSegment], live: [VoiceSegment],
+                       atLeast seconds: TimeInterval = 15) -> [String: [Float]] {
+        var sums: [String: [Float]] = [:]
+        var totals: [String: TimeInterval] = [:]
+        for l in live where !l.embedding.isEmpty && l.end - l.start >= VoiceSplitter.judgeSeconds {
+            var inside: [String: TimeInterval] = [:]
+            for r in review {
+                let overlap = min(r.end, l.end) - max(r.start, l.start)
+                if overlap > 0 { inside[r.speakerID, default: 0] += overlap }
+            }
+            // Only a live stretch that's almost all one of the recording's voices.
+            guard let best = inside.max(by: { $0.value < $1.value }),
+                  best.value >= 0.8 * (l.end - l.start) else { continue }
+            let unit = VoiceSplitter.unit(l.embedding)
+            var sum = sums[best.key] ?? [Float](repeating: 0, count: unit.count)
+            guard sum.count == unit.count else { continue }
+            for i in sum.indices { sum[i] += unit[i] * Float(best.value) }
+            sums[best.key] = sum
+            totals[best.key, default: 0] += best.value
+        }
+        return sums.filter { (totals[$0.key] ?? 0) >= seconds }.mapValues { VoiceSplitter.unit($0) }
+    }
+}
+
+/// What the voice checks heard and decided on one call, saved next to the
+/// call's recordings (voices.json), so a call that went wrong can be gone
+/// over afterwards and the settings checked against Jonny's real calls
+/// rather than test recordings. Holds voice fingerprints, like the voices
+/// Warble remembers, and never leaves the Mac.
+struct VoiceLog: Codable, Equatable {
+    struct Stretch: Codable, Equatable {
+        var voice: String
+        var start: TimeInterval
+        var end: TimeInterval
+        var print: [Float]
+
+        init(_ segment: VoiceSegment) {
+            voice = segment.speakerID
+            start = segment.start
+            end = segment.end
+            print = segment.embedding
+        }
+    }
+
+    var version = 1
+    /// The settings the call was checked with.
+    var settings: [String: Double]
+    /// Every stretch of the others' speech as the live check heard it.
+    var live: [Stretch]
+    /// The names the live voices had when the call ended.
+    var liveNames: [String: String]
+    /// The voices found by going over the recording afterwards, if that worked.
+    var review: [Stretch]?
+    /// The names the saved transcript uses.
+    var names: [String: String]
+
+    init(live: [VoiceSegment], liveNames: [String: String], review: [VoiceSegment]?, names: [String: String],
+         settings: [String: Double]) {
+        self.live = live.map(Stretch.init)
+        self.liveNames = liveNames
+        self.review = review?.map(Stretch.init)
+        self.names = names
+        self.settings = settings
+    }
+
+    /// The settings in force now.
+    static var currentSettings: [String: Double] {
+        [
+            "newVoiceDistance": Double(SpeakerIdentifier.newVoiceDistance),
+            "maxDistance": Double(VoiceMatcher.maxDistance),
+            "margin": Double(VoiceMatcher.margin),
+            "sameCallDistance": Double(VoiceMatcher.sameCallDistance),
+            "afterCallDistance": Double(VoiceMatcher.afterCallDistance),
+            "tentativeDistance": Double(VoiceMatcher.tentativeDistance),
+            "splitterSameDistance": Double(VoiceSplitter.sameDistance),
+        ]
+    }
+
+    /// Saves the log in `folder` as voices.json, off the main thread.
+    func save(in folder: URL) {
+        let log = self
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(log) else { return }
+            try? data.write(to: folder.appendingPathComponent("voices.json"), options: .atomic)
+        }
     }
 }
