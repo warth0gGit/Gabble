@@ -73,7 +73,7 @@ struct DictationView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Toggle("Show the listening ball by my cursor", isOn: $appState.inFieldIndicator)
-                Text("While you talk, a small green ball pulses just after your cursor, and a ring circles it while Warble tidies your words. Some apps don't say where their text box is; there, and with this off, the ball shows at the bottom of the screen instead.")
+                Text("While you talk, a small ball with the green Warble wave sits just after your cursor, and an arc circles it while Warble tidies your words. Some apps don't say where their text box is; there, and with this off, the ball shows at the bottom of the screen instead.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 if appState.dictationKey == .fn, let action = FnKeySetting.current, action != .doNothing {
