@@ -167,6 +167,15 @@ final class VoiceGuessTests: XCTestCase {
         let drifted = voice(2, distance: VoiceMatcher.sameCallDistance + 0.05)
         XCTAssertNil(VoiceMatcher.guessInCall(drifted, onCall: onCall, saved: [matt]))
         XCTAssertNil(VoiceMatcher.guessInCall(voice(5), onCall: onCall, saved: [matt]))
+        // Even with two people on the call to compare, an unsure rejoin is
+        // asked about: measured, it was nearly always someone else.
+        let two = onCall + [Voiceprint(name: "Sam", embedding: voice(4))]
+        XCTAssertNil(VoiceMatcher.guessInCall(drifted, onCall: two, saved: [matt]))
+        // Someone on file who isn't on the call can still be a tentative guess.
+        let unsure = voice(0, distance: VoiceMatcher.maxDistance + 0.03)
+        XCTAssertEqual(VoiceMatcher.guessInCall(unsure, onCall: two, saved: [matt, aj])?.confidence, .tentative)
+        XCTAssertNil(VoiceMatcher.guessInCall(unsure, onCall: [Voiceprint(name: "Matt", embedding: voice(0))] + two,
+                                              saved: [matt, aj]), "Matt is already on the call: not guessed again")
     }
 
     func testATentativeGuessNeedsSomeoneToBeNearerThan() {

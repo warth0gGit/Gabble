@@ -365,10 +365,9 @@ enum VoiceMatcher {
         return nil
     }
 
-    /// As `matchInCall`, with how sure Warble is. People already on this
-    /// call come first; a voice between `sameCallDistance` and
-    /// `tentativeDistance` of one of them (and clearly nearer them than
-    /// anyone else on the call) is a tentative match.
+    /// As `matchInCall`, with how sure Warble is: `.recognised` for what
+    /// `matchInCall` names, `.tentative` for someone on file (not already on
+    /// this call) whom `guess` is unsure of, otherwise nil (ask).
     static func guessInCall(_ embedding: [Float], onCall: [Voiceprint], saved: [Voiceprint],
                             heard: [Float]? = nil) -> VoiceGuess? {
         let whole = heard ?? embedding
@@ -377,12 +376,16 @@ enum VoiceMatcher {
                                ranked(whole, saved).first { $0.name == name }?.distance ?? 2)
             return VoiceGuess(name: name, distance: distance, confidence: .recognised)
         }
-        // Not sure enough to name them: at most a tentative guess, the nearer
-        // of the people on this call and the people on file.
-        let options = [tentativeOnCall(embedding, onCall), guess(whole, known: saved)].compactMap { $0 }
-        guard var nearest = options.min(by: { $0.distance < $1.distance }) else { return nil }
-        nearest.confidence = .tentative
-        return nearest
+        // Not sure enough to name them: at most a tentative guess at someone
+        // on file who isn't already on this call. Never a guess at someone on
+        // the call: measured, a new voice 0.4-0.5 from someone already named
+        // on the call was them only 0-7% of the time (the voice engine had
+        // already judged it a different person), so "Jordan?" would nearly
+        // always be wrong.
+        let present = Set(onCall.map { $0.name.lowercased() })
+        guard var guess = guess(whole, known: saved), !present.contains(guess.name.lowercased()) else { return nil }
+        guess.confidence = .tentative
+        return guess
     }
 
     /// The most talk to wait for before asking about a voice that sounds a
@@ -407,16 +410,6 @@ enum VoiceMatcher {
         let last = lastChecked ?? 0
         guard let next = rechecks.filter({ $0 > last }).min() else { return false }
         return next <= limit
-    }
-
-    /// Someone on this call the voice is clearly nearer than anyone else on
-    /// it, within `tentativeDistance`; needs two people on the call to compare.
-    private static func tentativeOnCall(_ embedding: [Float], _ onCall: [Voiceprint]) -> VoiceGuess? {
-        let ranked = ranked(embedding, onCall)
-        guard let best = ranked.first, best.distance <= tentativeDistance,
-              let runnerUp = ranked.dropFirst().first(where: { $0.name.caseInsensitiveCompare(best.name) != .orderedSame }),
-              runnerUp.distance - best.distance >= tentativeMargin else { return nil }
-        return VoiceGuess(name: best.name, distance: best.distance, confidence: .tentative)
     }
 
     /// Everyone on file, nearest first.
