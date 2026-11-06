@@ -193,3 +193,22 @@ final class VoiceLogTests: XCTestCase {
         XCTAssertEqual(decoded.settings["maxDistance"] ?? 0, Double(VoiceMatcher.maxDistance), accuracy: 0.0001)
     }
 }
+
+final class LearningPrintTests: XCTestCase {
+    func testTheVoiceThatStayedOnePersonIsLearned() {
+        var splitter = VoiceSplitter()
+        let jordan: [Float] = [1, 0, 0]
+        // Someone else, just close enough to Jordan's first seconds to be lumped in with him.
+        let lumpedIn: [Float] = [0.505, 0.863, 0]
+        // S1: Jordan all call. S2: Jordan for 9 s, then mostly the other person.
+        splitter.add((0..<4).map { VoiceSegment(speakerID: "S1", start: Double($0) * 6, end: Double($0) * 6 + 6, embedding: jordan) })
+        splitter.add((0..<3).map { VoiceSegment(speakerID: "S2", start: 30 + Double($0) * 3, end: 33 + Double($0) * 3, embedding: jordan) })
+        splitter.add((0..<20).map { VoiceSegment(speakerID: "S2", start: 40 + Double($0) * 6, end: 46 + Double($0) * 6,
+                                                 embedding: lumpedIn) })
+        XCTAssertEqual(Set(splitter.segments.map(\.speakerID)), ["S1", "S2"], "never split off")
+        let print = splitter.callPrint(of: "jordan", names: ["S1": "Jordan", "S2": "Jordan"])
+        XCTAssertLessThan(VoiceMatcher.distance(print ?? [], jordan), 0.01, "S2 said more, but drifted: S1 is learned")
+        XCTAssertNil(splitter.callPrint(of: "Jordan", names: ["S2": "Jordan"]))
+        XCTAssertNil(splitter.callPrint(of: "Priya", names: ["S1": "Jordan"]))
+    }
+}

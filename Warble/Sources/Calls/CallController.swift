@@ -492,17 +492,8 @@ final class CallController: ObservableObject {
         var learned = Set<String>()
         let finalTalk = SpeakerAssigner.talkTime(voicesHeard)
         for id in names.keys.sorted(by: { (finalTalk[$0] ?? 0) > (finalTalk[$1] ?? 0) }) {
-            guard let name = names[id], !learned.contains(name.lowercased()) else { continue }
-            let print: [Float]
-            if let reviewPrints {
-                guard let reviewed = reviewPrints[id] else { continue }
-                print = reviewed
-            } else {
-                guard let live = heard.splitter.callPrint(for: id) else { continue }
-                // Only if the voice stayed one person all call.
-                if let anchor = heard.splitter.fingerprint(for: id), VoiceMatcher.distance(live, anchor) > 0.4 { continue }
-                print = live
-            }
+            guard let name = names[id], !learned.contains(name.lowercased()),
+                  let print = reviewPrints?[id] ?? heard.splitter.callPrint(of: name, names: liveNames) else { continue }
             learned.insert(name.lowercased())
             voices.reinforce(name: name, embedding: print)
         }

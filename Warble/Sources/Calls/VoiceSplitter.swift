@@ -195,6 +195,26 @@ struct VoiceSplitter {
         return Self.unit(sum)
     }
 
+    /// How a person sounded over the whole call, from the live voices
+    /// under their name (`names`: voice to name): the one that said most and
+    /// stayed one person all call (its whole-call print still close to how
+    /// it first sounded). Nil if none did.
+    func callPrint(of name: String, names: [String: String]) -> [Float]? {
+        let talk = SpeakerAssigner.talkTime(segments)
+        let theirs = names.filter { $0.value.caseInsensitiveCompare(name) == .orderedSame }.map(\.key)
+            .sorted { (talk[$0] ?? 0) > (talk[$1] ?? 0) }
+        for voice in theirs {
+            guard let print = callPrint(for: voice) else { continue }
+            if let first = fingerprint(for: voice), Self.distance(print, first) > Self.steadyDistance { continue }
+            return print
+        }
+        return nil
+    }
+
+    /// A voice whose whole-call print is further than this from its first
+    /// seconds has had someone else lumped in, and isn't learned from.
+    static let steadyDistance: Float = 0.4
+
     // MARK: - Maths
 
     static func distance(_ a: [Float], _ b: [Float]) -> Float { VoiceMatcher.distance(a, b) }
