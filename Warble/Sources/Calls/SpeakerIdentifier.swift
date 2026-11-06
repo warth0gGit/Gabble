@@ -492,13 +492,14 @@ enum LiveChunks {
 /// spotted during the call. Known voices come back with their names as IDs.
 final class SpeakerIdentifier: @unchecked Sendable {
     static let sampleRate: Double = 16_000
-    /// How much call audio the voice engine looks at in one go. Its models
-    /// always take ten seconds (a shorter chunk is padded with silence), and
-    /// measured on real calls ten seconds of audio beat six: fewer people
-    /// asked about twice (0.8 vs 1.7 a call), fewer known people asked about
-    /// at all, a third less speech left unnamed, and the slowest names came
-    /// in about twice as fast, for about two seconds' more delay on average
-    /// before a stretch of speech gets its name.
+    /// How much call audio the voice engine looks at in one go (see
+    /// `LiveChunks.seconds`). Its models always take ten seconds and pad a
+    /// shorter chunk with silence. Replaying real calls through the same
+    /// models, six seconds plus four of silence made everyone's voice come
+    /// out alike, and most speech ended up under one voice (58-78% under a
+    /// wrong name, against 5-7% with ten seconds). How badly depends on how
+    /// the Mac's copy of the model treats silence, which couldn't be checked;
+    /// the cost is about two seconds' more delay before speech gets its name.
     private let chunkSeconds: Double = LiveChunks.seconds
     /// Audio kept while the models download, at most ten minutes.
     private let maxPendingSeconds: Double = 600
