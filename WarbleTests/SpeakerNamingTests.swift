@@ -85,3 +85,29 @@ final class KnownVoicesTests: XCTestCase {
         XCTAssertNil(KnownVoicesSection.likelyDuplicate(of: person("Matt", [0, 1]), in: [mattKern]))
     }
 }
+
+final class SpeakerCheckTests: XCTestCase {
+    private func voice(_ id: String, _ start: Double, _ end: Double) -> VoiceSegment {
+        VoiceSegment(speakerID: id, start: start, end: end)
+    }
+
+    func testStatusesAndSharedNames() {
+        let voices = [voice("A", 0, 10), voice("B", 10, 20), voice("C", 20, 30), voice("D", 30, 40), voice("E", 40, 41)]
+        let names = ["A": "AJ", "B": "Jordan", "C": "Jordan", "D": "Priya?"]
+        let prints: [String: [Float]] = ["A": [1, 0, 0], "B": [0, 1, 0], "C": [0, 0, 1], "D": [1, 1, 0]]
+        let rows = SpeakerCheck.rows(voices: voices, names: names, namedLive: ["aj"], prints: prints) { _ in "" }
+        XCTAssertEqual(rows.map(\.id), ["A", "B", "C", "D"])   // E spoke for 1 s: not listed
+        XCTAssertEqual(rows.map(\.status), [.namedLive, .shared, .shared, .guess])
+        XCTAssertEqual(rows.map(\.part), [nil, 1, 2, nil])
+        XCTAssertEqual(rows[3].name, "Priya")
+        XCTAssertEqual(rows[0].clip, 0...4)
+        XCTAssertEqual(rows.filter(\.needsCheck).count, 3)
+    }
+
+    func testSameNameAndSameVoiceIsNotShared() {
+        let voices = [voice("B", 0, 10), voice("C", 10, 20), voice("X", 20, 30)]
+        let rows = SpeakerCheck.rows(voices: voices, names: ["B": "Jordan", "C": "Jordan"], namedLive: [],
+                                     prints: ["B": [1, 0], "C": [0.99, 0.05]]) { _ in "" }
+        XCTAssertEqual(rows.map(\.status), [.recognised, .recognised, .unnamed])
+    }
+}

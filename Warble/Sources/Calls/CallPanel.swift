@@ -134,6 +134,12 @@ struct CallPanelView: View {
         }
     }
 
+    /// "Check who spoke" for the call on the card, until Done or Later.
+    private var activeCheck: SpeakerCheck? {
+        guard let check = calls.speakerCheck, !check.finished else { return nil }
+        return check
+    }
+
     private var showsMiniPill: Bool {
         calls.isRecording && calls.panelMinimized
     }
@@ -179,10 +185,19 @@ struct CallPanelView: View {
             case .saving:
                 savingSteps
             case .saved(let url):
-                savedCard(url: url)
+                if let check = activeCheck {
+                    savedHeader
+                    SpeakerCheckView(clips: calls.clips, check: check)
+                } else {
+                    savedCard(url: url)
+                }
             case .filing:
                 savedHeader
-                filingChoice
+                if let check = activeCheck {
+                    SpeakerCheckView(clips: calls.clips, check: check)
+                } else {
+                    filingChoice
+                }
             case .idle:
                 EmptyView()
             }

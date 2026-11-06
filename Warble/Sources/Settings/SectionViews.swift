@@ -348,6 +348,7 @@ struct CallsView: View {
     @EnvironmentObject private var calls: CallController
     @State private var recent: [URL] = []
     @State private var sharing: ShareTarget?
+    @State private var checking = false
 
     private struct ShareTarget: Identifiable {
         let url: URL
@@ -385,6 +386,22 @@ struct CallsView: View {
                     }
                 }
             }
+            if let check = calls.speakerCheck, !calls.isRecording {
+                Section("Last call") {
+                    HStack {
+                        Text(check.url.deletingPathExtension().lastPathComponent).lineLimit(1)
+                        Spacer()
+                        if check.toCheck > 0 {
+                            Text("\(check.toCheck) to check").font(.caption).foregroundStyle(CallPanelColor.amber)
+                        }
+                        Button("Speakers") {
+                            calls.reopenCheck()
+                            checking = true
+                        }
+                        .help("Check and fix who spoke on this call")
+                    }
+                }
+            }
             Section("Recent transcripts") {
                 if recent.isEmpty {
                     Text("No transcripts yet.").foregroundStyle(.secondary)
@@ -411,6 +428,19 @@ struct CallsView: View {
         .formStyle(.grouped)
         .navigationTitle("Calls")
         .sheet(item: $sharing) { target in ShareCallSheet(note: target.url) }
+        .sheet(isPresented: $checking) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let check = calls.speakerCheck, !check.finished {
+                    SpeakerCheckView(clips: calls.clips, check: check)
+                } else {
+                    Label("Speakers saved", systemImage: "checkmark.circle.fill").foregroundStyle(WarbleColor.green)
+                    HStack { Spacer(); Button("Close") { checking = false }.keyboardShortcut(.defaultAction) }
+                }
+            }
+            .padding(20)
+            .frame(width: 420)
+            .environmentObject(calls)
+        }
         .onAppear { recent = calls.recentTranscripts() }
         .onChange(of: calls.state) { _, _ in recent = calls.recentTranscripts() }
     }

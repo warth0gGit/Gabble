@@ -460,6 +460,7 @@ final class CallController: ObservableObject {
         let guessedIDs = Set(nameConfidence.filter { $0.value == .tentative }.map(\.key))
         var names = namesThisCall.filter { !guessedIDs.contains($0.key) }
         let guesses = namesThisCall.filter { guessedIDs.contains($0.key) }
+        let namedLive = Set(namesThisCall.filter { nameConfidence[$0.key] == .confirmed }.values.map { $0.lowercased() })
         let checked = voicesChecked
         lastNaming = nil
         askTimeout?.cancel()
@@ -564,13 +565,25 @@ final class CallController: ObservableObject {
         // Teams makes them sound a bit different (one recording wasn't enough).
         // The recording's voices are used when there are any: they keep
         // people apart better than the live check.
-        var learned = Set<String>()
+        // How each voice sounds, for spotting two people under one name and
+        // for learning names you confirm in "Check who spoke".
+        var checkPrints: [String: [Float]] = reviewPrints ?? [:]
+        for id in Set(voicesHeard.map(\.speakerID)) where checkPrints[id] == nil {
+            if let print = heard.splitter.callPrint(for: id, atLeast: 2) ?? heard.splitter.fingerprint(for: id) {
+                checkPrints[id] = print
+            }
+        }
+        // A name two clearly different voices ended up with isn't learned
+        // until you say which voice is them.
         let finalTalk = SpeakerAssigner.talkTime(voicesHeard)
+        let sharedNames = SpeakerCheck.sharedNames(order: Array(finalTalk.keys), names: names, prints: checkPrints)
+        var learned = Set<String>()
+        var learnedAtSave: [String: UUID] = [:]
         for id in names.keys.sorted(by: { (finalTalk[$0] ?? 0) > (finalTalk[$1] ?? 0) }) {
-            guard let name = names[id], !learned.contains(name.lowercased()),
+            guard let name = names[id], !learned.contains(name.lowercased()), !sharedNames.contains(name.lowercased()),
                   let print = reviewPrints?[id] ?? heard.splitter.callPrint(of: name, names: liveNames) else { continue }
             learned.insert(name.lowercased())
-            voices.reinforce(name: name, embedding: print)
+            if let label = voices.reinforce(name: name, embedding: print) { learnedAtSave[id] = label }
         }
         // With no review, a guessed voice keeps its guess in the transcript, marked "?".
         if reviewHeard == nil {
@@ -589,6 +602,25 @@ final class CallController: ObservableObject {
             return s.text.isEmpty ? nil : s
         }
         finished.meeting = callMeeting ?? calendar.meeting(at: finished.started, appName: finished.appName)
+        // "Check who spoke": only when a voice is unnamed, guessed or shared.
+        let othersRecording = recorder.recordings.first { $0.speaker == CallRecorder.othersLabel }
+        let lines = finished.segments
+        var checkRows = SpeakerCheck.rows(voices: voicesHeard, names: names, namedLive: namedLive,
+                                          prints: checkPrints) { id in
+            Self.quote(of: id, in: lines, voices: voicesHeard)
+        }
+        let namesOnCall = Set(checkRows.compactMap { $0.name?.lowercased() })
+        for index in checkRows.indices where checkRows[index].status == .unnamed || checkRows[index].status == .guess {
+            guard let print = checkPrints[checkRows[index].id] else { continue }
+            let candidates = VoiceMatcher.candidates(print, known: voices.voices, limit: 3)
+                .filter { !namesOnCall.contains($0.name.lowercased()) || $0.name.caseInsensitiveCompare(checkRows[index].name ?? "") == .orderedSame }
+            checkRows[index].suggestions = NameSuggestion.build(hint: nil, candidates: candidates, onCall: [])
+        }
+        let check: SpeakerCheck? = checkRows.contains(where: \.needsCheck)
+            ? SpeakerCheck(rows: checkRows, url: URL(fileURLWithPath: "/"), started: finished.started,
+                           othersFile: othersRecording?.file, othersOffset: othersRecording?.startOffset ?? 0,
+                           voices: voicesHeard, prints: checkPrints, learnedAtSave: learnedAtSave)
+            : nil
         guard !finished.segments.isEmpty else {
             if shownHere {
                 transcript = finished
@@ -609,7 +641,10 @@ final class CallController: ObservableObject {
             let url = try save(finished)
             lexicon.harvest(from: finished.plainText)
             if let sure { filing.learn(features, folder: sure.folder) }
-            if finished.summary == .pending { summarise(finished, savedAt: url) }
+            // With speakers to check on the card, the summary waits for Done
+            // or Later (or three minutes), so it uses the right names.
+            let holdSummary = finished.summary == .pending && check != nil && shownHere
+            if finished.summary == .pending && !holdSummary { summarise(finished, savedAt: url) }
             let stats = SavedStats(minutes: max(1, Int((finished.duration / 60).rounded())),
                                    speakers: finished.speakers.count,
                                    words: SummaryChunker.wordCount(finished.plainText),
@@ -623,10 +658,17 @@ final class CallController: ObservableObject {
             lastSaved = (url, finished, features)
             transcript = finished
             savedStats = stats
+            if var check {
+                check.url = url
+                speakerCheck = check
+                if holdSummary { holdSummaryForCheck(finished, savedAt: url) }
+            } else {
+                speakerCheck = nil
+            }
             if let sure {
                 filedNote = "Filed in \(sure.folder) (\(sure.reason))."
                 state = .saved(url)
-                scheduleHide(after: 10)
+                if speakerCheck == nil { scheduleHide(after: 10) } else { hideTask?.cancel() }
             } else {
                 filedNote = nil
                 filingSuggestions = filing.suggestions(for: features)
@@ -681,6 +723,142 @@ final class CallController: ObservableObject {
         var updated = transcript
         updated.segments = segments
         return updated
+    }
+
+    // MARK: - Check who spoke
+
+    /// The last saved call's "Check who spoke", while it has rows to show.
+    @Published private(set) var speakerCheck: SpeakerCheck?
+    /// The summary waiting for the check to be done.
+    private var heldSummary: (transcript: CallTranscript, url: URL)?
+    private var heldSummaryTask: Task<Void, Never>?
+    /// The check changed names after the summary was written.
+    private var checkChangedAfterSummary = false
+    /// Plays the 4-second clips.
+    let clips = ClipPlayer()
+
+    /// A line a voice said, for recognising them. Pure.
+    nonisolated static func quote(of id: String, in lines: [CallTranscript.Segment], voices: [VoiceSegment]) -> String {
+        let theirs = lines.filter { line in
+            line.speaker != CallRecorder.meLabel
+                && SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: line), in: voices) == id
+        }
+        guard let best = theirs.max(by: { $0.text.count < $1.text.count }) else { return "" }
+        return best.text.count > 90 ? String(best.text.prefix(88)) + "…" : best.text
+    }
+
+    private func holdSummaryForCheck(_ transcript: CallTranscript, savedAt url: URL) {
+        heldSummary = (transcript, url)
+        heldSummaryTask?.cancel()
+        heldSummaryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(180))
+            guard !Task.isCancelled else { return }
+            self?.releaseHeldSummary()
+        }
+    }
+
+    /// Starts the summary that was waiting, with the names as they are now.
+    private func releaseHeldSummary() {
+        heldSummaryTask?.cancel()
+        guard let held = heldSummary else { return }
+        heldSummary = nil
+        if let saved = lastSaved, saved.transcript.started == held.transcript.started {
+            summarise(saved.transcript, savedAt: saved.url)
+        } else {
+            summarise(held.transcript, savedAt: held.url)
+        }
+    }
+
+    /// Plays (or stops) a row's clip.
+    func playClip(_ rowID: String) {
+        guard let check = speakerCheck, let row = check.rows.first(where: { $0.id == rowID }),
+              let clip = row.clip, let file = check.othersFile else { return }
+        if clips.playing == rowID { return clips.stop() }
+        clips.play(rowID, file: file, from: clip.lowerBound - check.othersOffset, length: clip.upperBound - clip.lowerBound)
+    }
+
+    /// "This is Jordan" / "It's Matt Kern" / a typed name / "Not AJ?" → name:
+    /// the row gets that name and is marked confirmed (learned on Done).
+    func checkName(_ rowID: String, as name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var check = speakerCheck,
+              let index = check.rows.firstIndex(where: { $0.id == rowID }) else { return }
+        let changed = check.rows[index].name?.caseInsensitiveCompare(trimmed) != .orderedSame
+        check.rows[index].name = trimmed
+        check.rows[index].confirmed = true
+        // Once the rows sharing a name are each told apart, they aren't shared any more.
+        let shared = SpeakerCheck.sharedNames(order: check.rows.map(\.id),
+                                              names: Dictionary(uniqueKeysWithValues: check.rows.compactMap { row in row.name.map { (row.id, $0) } }),
+                                              prints: check.prints)
+        for i in check.rows.indices where check.rows[i].status == .shared
+            && !shared.contains((check.rows[i].name ?? "").lowercased()) {
+            check.rows[i].status = check.rows[i].confirmed ? .namedLive : .recognised
+            check.rows[i].part = nil
+        }
+        speakerCheck = check
+        if changed { applyCheckNames() }
+    }
+
+    /// "Same as…": the row is the same person as another row.
+    func checkSame(_ rowID: String, as otherID: String) {
+        guard let name = speakerCheck?.rows.first(where: { $0.id == otherID })?.name else { return }
+        checkName(rowID, as: name)
+    }
+
+    /// Rewrites the saved note with the check's names.
+    private func applyCheckNames() {
+        guard let check = speakerCheck, var saved = lastSaved, saved.transcript.started == check.started else { return }
+        check.relabel(&saved.transcript) { [self] id in voiceName(id, voices: check.voices, names: [:]) }
+        do {
+            let url = try save(saved.transcript)
+            if url != saved.url { try? FileManager.default.removeItem(at: saved.url) }
+            saved.url = url
+            lastSaved = saved
+            if transcript?.started == saved.transcript.started { transcript = saved.transcript }
+            if heldSummary == nil { checkChangedAfterSummary = true }
+        } catch {
+            lastError = "Couldn't update the speaker names: \(error.localizedDescription)"
+        }
+    }
+
+    /// Done: Warble learns the voices you confirmed (and takes back out what
+    /// it learned for a name you corrected). Rows you left alone aren't
+    /// learned. Then the summary is written (again, if names changed after it).
+    func finishCheck() {
+        guard var check = speakerCheck else { return }
+        clips.stop()
+        for row in check.rows where row.confirmed {
+            guard let name = row.name, let print = check.prints[row.id] else { continue }
+            if let label = check.learnedAtSave[row.id] { voices.unlearn(label) }
+            if let label = voices.remember(name: name, embedding: print) { check.learnedAtSave[row.id] = label }
+        }
+        check.finished = true
+        speakerCheck = check
+        endCheck()
+    }
+
+    /// Later: nothing more is learned now; the check stays on the Calls page.
+    func postponeCheck() {
+        clips.stop()
+        speakerCheck?.finished = true
+        endCheck()
+    }
+
+    private func endCheck() {
+        if heldSummary != nil {
+            releaseHeldSummary()
+        } else if checkChangedAfterSummary, let saved = lastSaved, saved.transcript.summary != .none {
+            summarise(saved.transcript, savedAt: saved.url)
+        }
+        checkChangedAfterSummary = false
+        if case .saved = state { scheduleHide(after: 3) }
+        updatePanel()
+    }
+
+    /// Opens the last call's check again (from the Calls page).
+    func reopenCheck() {
+        guard speakerCheck != nil else { return }
+        speakerCheck?.finished = false
     }
 
     // MARK: - Voices
