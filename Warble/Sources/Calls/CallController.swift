@@ -987,7 +987,7 @@ final class CallController: ObservableObject {
                 let undecided = self.namesThisCall[id] == nil || self.nameConfidence[id] == .tentative
                 let guess = embedding.flatMap { VoiceMatcher.guessInCall($0, onCall: onCall, saved: known, heard: heardSoFar) }
                 let taken = guess.map { $0.confidence == .tentative && self.nameTaken($0.name, except: id) } ?? false
-                self.log(taken ? "check-name-taken" : "check", voice: id, name: guess?.name,
+                self.logDecision(taken ? "check-name-taken" : "check", voice: id, name: guess?.name,
                          distance: guess?.distance, confidence: guess?.confidence)
                 if undecided, self.checkedAtTalk[id] != .infinity, let guess, !taken {
                     if guess.confidence != .tentative { self.dropGuesses(of: guess.name, except: [id]) }
