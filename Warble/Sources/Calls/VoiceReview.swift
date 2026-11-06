@@ -172,3 +172,67 @@ enum VoiceReview {
         return sums.filter { (totals[$0.key] ?? 0) >= seconds }.mapValues { VoiceSplitter.unit($0) }
     }
 }
+
+/// What the voice checks heard and decided on one call, saved next to the
+/// call's recordings (voices.json), so a call that went wrong can be gone
+/// over afterwards and the settings checked against Jonny's real calls
+/// rather than test recordings. Holds voice fingerprints, like the voices
+/// Warble remembers, and never leaves the Mac.
+struct VoiceLog: Codable, Equatable {
+    struct Stretch: Codable, Equatable {
+        var voice: String
+        var start: TimeInterval
+        var end: TimeInterval
+        var print: [Float]
+
+        init(_ segment: VoiceSegment) {
+            voice = segment.speakerID
+            start = segment.start
+            end = segment.end
+            print = segment.embedding
+        }
+    }
+
+    var version = 1
+    /// The settings the call was checked with.
+    var settings: [String: Double]
+    /// Every stretch of the others' speech as the live check heard it.
+    var live: [Stretch]
+    /// The names the live voices had when the call ended.
+    var liveNames: [String: String]
+    /// The voices found by going over the recording afterwards, if that worked.
+    var review: [Stretch]?
+    /// The names the saved transcript uses.
+    var names: [String: String]
+
+    init(live: [VoiceSegment], liveNames: [String: String], review: [VoiceSegment]?, names: [String: String],
+         settings: [String: Double]) {
+        self.live = live.map(Stretch.init)
+        self.liveNames = liveNames
+        self.review = review?.map(Stretch.init)
+        self.names = names
+        self.settings = settings
+    }
+
+    /// The settings in force now.
+    static var currentSettings: [String: Double] {
+        [
+            "newVoiceDistance": Double(SpeakerIdentifier.newVoiceDistance),
+            "maxDistance": Double(VoiceMatcher.maxDistance),
+            "margin": Double(VoiceMatcher.margin),
+            "sameCallDistance": Double(VoiceMatcher.sameCallDistance),
+            "afterCallDistance": Double(VoiceMatcher.afterCallDistance),
+            "tentativeDistance": Double(VoiceMatcher.tentativeDistance),
+            "splitterSameDistance": Double(VoiceSplitter.sameDistance),
+        ]
+    }
+
+    /// Saves the log in `folder` as voices.json, off the main thread.
+    func save(in folder: URL) {
+        let log = self
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(log) else { return }
+            try? data.write(to: folder.appendingPathComponent("voices.json"), options: .atomic)
+        }
+    }
+}

@@ -180,3 +180,16 @@ final class VoiceGuessTests: XCTestCase {
                                                 heard: voice(2, distance: 0.1)), "Jordan")
     }
 }
+
+final class VoiceLogTests: XCTestCase {
+    func testTheVoiceLogReadsBackAsWritten() throws {
+        let live = [VoiceSegment(speakerID: "S1", start: 0, end: 6, embedding: [1, 0]),
+                    VoiceSegment(speakerID: "S2", start: 6, end: 9, embedding: [0, 1])]
+        let log = VoiceLog(live: live, liveNames: ["S1": "Jordan"], review: nil, names: ["S1": "Jordan"],
+                           settings: VoiceLog.currentSettings)
+        let decoded = try JSONDecoder().decode(VoiceLog.self, from: JSONEncoder().encode(log))
+        XCTAssertEqual(decoded, log)
+        XCTAssertEqual(decoded.live.map(\.voice), ["S1", "S2"])
+        XCTAssertEqual(decoded.settings["maxDistance"] ?? 0, Double(VoiceMatcher.maxDistance), accuracy: 0.0001)
+    }
+}

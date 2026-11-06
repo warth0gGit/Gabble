@@ -452,6 +452,8 @@ final class CallController: ObservableObject {
         // Go over the whole recording of the other side, which tells people
         // apart better than the live check, and put the names on its voices.
         var reviewPrints: [String: [Float]]?
+        let liveNames = names
+        var reviewHeard: [VoiceSegment]?
         if let others = recorder.recordings.first(where: { $0.speaker == CallRecorder.othersLabel }) {
             let minutes = finished.duration / 60
             let file = others.file
@@ -466,6 +468,7 @@ final class CallController: ObservableObject {
                                                       fingerprints: found.fingerprints) {
                     voicesHeard = reviewed.segments
                     names = reviewed.names
+                    reviewHeard = reviewed.segments
                     // Each of the recording's voices, in the same terms as the
                     // people Warble knows. A voice nobody named that clearly
                     // is someone from an earlier call gets their name.
@@ -503,6 +506,9 @@ final class CallController: ObservableObject {
             learned.insert(name.lowercased())
             voices.reinforce(name: name, embedding: print)
         }
+        // What the voice checks heard and decided, kept with the recordings.
+        VoiceLog(live: heard.splitter.segments, liveNames: liveNames, review: reviewHeard, names: names,
+                 settings: VoiceLog.currentSettings).save(in: recorder.folder)
         // Your mic picks up the others through your speakers; drop those echoes.
         finished.segments = EchoFilter.removeEchoes(from: finished.segments)
         finished.relabel { [self] segment in label(for: segment, voices: voicesHeard, names: names) }
