@@ -484,6 +484,61 @@ enum LiveChunks {
         guard pending > 0, chunk > 0 else { return 0 }
         return wholeChunksOnly ? pending / chunk * chunk : pending
     }
+
+    /// The shortest last bit of a call worth a look of its own.
+    static let shortestTail: Double = 2
+
+    /// The audio left at the end of a call, made into whole chunks. The voice
+    /// engine would fill a short last chunk with digital silence, and silence
+    /// makes every voice in that chunk sound alike; instead the last part's
+    /// own sound is repeated to fill it (as the engine itself does for its
+    /// voice fingerprints). A last part shorter than `minimumTail` samples is
+    /// left out. Returns the audio to send and how much of it is real.
+    static func endOfCall(_ audio: [Float], chunk: Int, minimumTail: Int) -> (audio: [Float], real: Int) {
+        guard chunk > 0, !audio.isEmpty else { return ([], 0) }
+        let whole = audio.count / chunk * chunk
+        let tail = audio.count - whole
+        guard tail > 0 else { return (audio, audio.count) }
+        guard tail >= minimumTail else { return (Array(audio.prefix(whole)), whole) }
+        let last = audio[whole...]
+        var out = Array(audio.prefix(whole))
+        out.reserveCapacity(whole + chunk)
+        while out.count < whole + chunk {
+            out.append(contentsOf: last.prefix(whole + chunk - out.count))
+        }
+        return (out, audio.count)
+    }
+}
+
+/// The voice engine's clock against the call's. Gaps in the call app's
+/// sound are not given to the engine (see `SystemAudioCapture`), so after a
+/// gap the engine's times run behind the call's by the gap's length. Pure,
+/// unit tested.
+enum EngineClock {
+    /// A gap of `extra` seconds just before `at` seconds of engine audio.
+    struct Gap: Equatable {
+        var at: TimeInterval
+        var extra: TimeInterval
+    }
+
+    /// The call time of `time` seconds into the engine's audio. A stretch
+    /// ending exactly where a gap begins ends before it (`isEnd`).
+    static func callTime(_ time: TimeInterval, gaps: [Gap], isEnd: Bool = false) -> TimeInterval {
+        time + gaps.filter { isEnd ? $0.at < time : $0.at <= time }.reduce(0) { $0 + $1.extra }
+    }
+
+    /// `gaps` with another `extra` seconds at `at` (joined to the last gap if
+    /// no audio came between them).
+    static func adding(_ extra: TimeInterval, at: TimeInterval, to gaps: [Gap]) -> [Gap] {
+        guard extra > 0 else { return gaps }
+        var out = gaps
+        if let last = out.last, abs(last.at - at) < 1e-9 {
+            out[out.count - 1].extra += extra
+        } else {
+            out.append(Gap(at: at, extra: extra))
+        }
+        return out
+    }
 }
 
 /// Works out who is speaking in the other side of a call using FluidAudio's
@@ -518,6 +573,8 @@ final class SpeakerIdentifier: @unchecked Sendable {
     private var processedSamples = 0
     private var audioStartOffset: TimeInterval?
     private var failed = false
+    /// Where the call app's sound had gaps, on the engine's clock.
+    private var gaps: [EngineClock.Gap] = []
 
     /// - Parameter origin: the moment transcript times are measured from.
     init(origin: Date) {
@@ -548,7 +605,8 @@ final class SpeakerIdentifier: @unchecked Sendable {
     func prepare() async throws {
         do {
             let models = try await DiarizerModels.downloadIfNeeded()
-            let diarizer = DiarizerManager()
+            // The engine's chunk length must match what Warble sends (see chunkSeconds).
+            let diarizer = DiarizerManager(config: DiarizerConfig(chunkDuration: Float(LiveChunks.seconds)))
             diarizer.initialize(models: models)
             diarizer.speakerManager.speakerThreshold = Self.newVoiceDistance
             diarizer.speakerManager.embeddingThreshold = Self.refineDistance
@@ -598,6 +656,17 @@ final class SpeakerIdentifier: @unchecked Sendable {
         }
     }
 
+    /// The call app sent nothing for `seconds` (its sound skipped ahead).
+    /// The engine isn't given silence for it; later voices are moved on by
+    /// that much instead.
+    func skip(seconds: TimeInterval) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !failed, seconds > 0 else { return }
+        let at = Double(processedSamples + pending.count) / Self.sampleRate
+        gaps = EngineClock.adding(seconds, at: at, to: gaps)
+    }
+
     /// Processes whatever audio is left and waits for it. Call when the call ends.
     func finish() async {
         lock.lock()
@@ -631,21 +700,30 @@ final class SpeakerIdentifier: @unchecked Sendable {
         let count = LiveChunks.samplesToSend(pending: pending.count, chunk: Int(chunkSeconds * Self.sampleRate),
                                              wholeChunksOnly: wholeChunksOnly)
         guard count > 0 else { return }
-        let chunk = Array(pending.prefix(count))
+        let size = Int(chunkSeconds * Self.sampleRate)
+        let (chunk, real) = wholeChunksOnly
+            ? (audio: Array(pending.prefix(count)), real: count)
+            : LiveChunks.endOfCall(Array(pending.prefix(count)), chunk: size,
+                                   minimumTail: Int(LiveChunks.shortestTail * Self.sampleRate))
         let offset = Double(processedSamples) / Self.sampleRate
+        let realEnd = offset + Double(real) / Self.sampleRate
         let base = audioStartOffset ?? 0
+        let gaps = self.gaps
         processedSamples += count
         pending.removeFirst(count)
         let onSegments = self.onSegments
         queue.async {
-            // Very short chunks (under a second) aren't worth analysing.
-            guard Double(chunk.count) >= Self.sampleRate else { return }
+            guard real > 0, !chunk.isEmpty else { return }
             guard let result = try? diarizer.performCompleteDiarization(chunk, atTime: offset) else { return }
-            let segments = result.segments.map {
-                VoiceSegment(speakerID: $0.speakerId,
-                             start: base + Double($0.startTimeSeconds),
-                             end: base + Double($0.endTimeSeconds),
-                             embedding: $0.embedding)
+            // Engine times -> call times: skip the repeated end-of-call filler
+            // and move voices after a gap on by the gap's length.
+            let segments = result.segments.compactMap { s -> VoiceSegment? in
+                let start = Double(s.startTimeSeconds), end = min(Double(s.endTimeSeconds), realEnd)
+                guard start < realEnd, end > start else { return nil }
+                return VoiceSegment(speakerID: s.speakerId,
+                                    start: base + EngineClock.callTime(start, gaps: gaps),
+                                    end: base + EngineClock.callTime(end, gaps: gaps, isEnd: true),
+                                    embedding: s.embedding)
             }
             guard !segments.isEmpty else { return }
             Task { @MainActor in onSegments?(segments) }

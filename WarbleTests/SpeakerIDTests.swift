@@ -357,6 +357,36 @@ final class ChunkAndGapTests: XCTestCase {
         XCTAssertEqual(LiveChunks.samplesToSend(pending: 0, chunk: chunk, wholeChunksOnly: false), 0)
     }
 
+    func testTheLastBitOfACallIsRepeatedNotPaddedWithSilence() {
+        let chunk = 10
+        let (out, real) = LiveChunks.endOfCall(Array(1...23).map(Float.init), chunk: chunk, minimumTail: 2)
+        XCTAssertEqual(real, 23)
+        XCTAssertEqual(out.count, 30)
+        XCTAssertEqual(Array(out.prefix(20)), Array(1...20).map(Float.init), "whole chunks untouched")
+        XCTAssertEqual(Array(out.suffix(10)), [21, 22, 23, 21, 22, 23, 21, 22, 23, 21], "no silence")
+        let short = LiveChunks.endOfCall(Array(1...21).map(Float.init), chunk: chunk, minimumTail: 2)
+        XCTAssertEqual(short.real, 20, "a scrap too short to judge is left out")
+        XCTAssertEqual(short.audio.count, 20)
+        XCTAssertEqual(LiveChunks.endOfCall(Array(1...20).map(Float.init), chunk: chunk, minimumTail: 2).audio.count, 20)
+        XCTAssertEqual(LiveChunks.endOfCall([], chunk: chunk, minimumTail: 2).real, 0)
+        XCTAssertEqual(LiveChunks.endOfCall([1, 2, 3], chunk: chunk, minimumTail: 2).audio, [1, 2, 3, 1, 2, 3, 1, 2, 3, 1])
+    }
+
+    func testVoicesAfterAGapAreMovedOnByItsLength() {
+        var gaps: [EngineClock.Gap] = []
+        gaps = EngineClock.adding(3, at: 20, to: gaps)
+        gaps = EngineClock.adding(1, at: 20, to: gaps)     // the same gap, in two pieces
+        gaps = EngineClock.adding(5, at: 50, to: gaps)
+        gaps = EngineClock.adding(0, at: 60, to: gaps)     // nothing
+        XCTAssertEqual(gaps, [.init(at: 20, extra: 4), .init(at: 50, extra: 5)])
+        XCTAssertEqual(EngineClock.callTime(10, gaps: gaps), 10, "before any gap")
+        XCTAssertEqual(EngineClock.callTime(20, gaps: gaps), 24, "starting right after the gap")
+        XCTAssertEqual(EngineClock.callTime(20, gaps: gaps, isEnd: true), 20, "ending right where it began")
+        XCTAssertEqual(EngineClock.callTime(30, gaps: gaps), 34)
+        XCTAssertEqual(EngineClock.callTime(55, gaps: gaps), 64)
+        XCTAssertEqual(EngineClock.callTime(5, gaps: []), 5)
+    }
+
     func testSilenceGoesInOneSecondPiecesAndLongGapsAreCapped() {
         XCTAssertEqual(AudioGap.pieces(120_000, sampleRate: 48_000), [48_000, 48_000, 24_000])
         XCTAssertEqual(AudioGap.pieces(48_000, sampleRate: 48_000), [48_000])

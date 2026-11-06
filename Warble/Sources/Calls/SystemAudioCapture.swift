@@ -19,11 +19,13 @@ enum SystemAudioError: LocalizedError {
 final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "warble.system-audio")
-    private let onBuffer: @Sendable (AVAudioPCMBuffer) -> Void
+    /// Called with each buffer of the call app's sound, and with `isGap`
+    /// true for the silence put in where the app sent nothing (see below).
+    private let onBuffer: @Sendable (_ buffer: AVAudioPCMBuffer, _ isGap: Bool) -> Void
     /// Where the last buffer ended on the capture clock (used on `queue` only).
     private var lastEnd: TimeInterval?
 
-    init(onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) {
+    init(onBuffer: @escaping @Sendable (_ buffer: AVAudioPCMBuffer, _ isGap: Bool) -> Void) {
         self.onBuffer = onBuffer
     }
 
@@ -71,11 +73,11 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
             let missing = AudioGap.silentFrames(previousEnd: lastEnd, start: start, sampleRate: rate)
             for frames in AudioGap.pieces(missing, sampleRate: rate) {
                 guard let silence = Self.silence(frames: frames, format: buffer.format) else { break }
-                onBuffer(silence)
+                onBuffer(silence, true)
             }
             lastEnd = start + Double(buffer.frameLength) / rate
         }
-        onBuffer(buffer)
+        onBuffer(buffer, false)
     }
 
     /// A stretch of silence in the given format.
@@ -112,10 +114,12 @@ enum AudioGap {
     /// Longer jumps are taken to be the clock being reset, not silence.
     static let maximum: TimeInterval = 600
     /// The most silence put in for one gap. Every second of it goes through
-    /// the recording, the voice check and the transcriber at once, so a very
-    /// long gap would mean a burst of work and memory; past this, the voices
-    /// after the gap are off by the extra (a minute of silence is ~23 MB at
-    /// the call app's 48 kHz stereo).
+    /// the recording and the transcriber at once, so a very long gap would
+    /// mean a burst of work and memory; past this, the voices after the gap
+    /// are off by the extra (a minute of silence is ~11.5 MB of the call
+    /// app's 48 kHz mono sound). The voice check is not given the silence
+    /// (digital silence makes every voice sound alike to it); it is told how
+    /// long the gap was instead (`SpeakerIdentifier.skip`).
     static let mostFilled: TimeInterval = 60
 
     /// Frames of silence to add before a buffer that starts at `start`

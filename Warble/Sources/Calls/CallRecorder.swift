@@ -57,11 +57,16 @@ final class CallRecorder {
         let callWriter = self.callWriter
         let speakers = self.speakers
         let othersMeter = self.othersMeter
-        let capture = SystemAudioCapture { buffer in
+        let capture = SystemAudioCapture { buffer, isGap in
             othersMeter.feed(buffer)
             callTranscriber.feed(buffer)
             callWriter.write(buffer)
-            speakers.append(buffer)
+            // The voice check gets the length of a gap, not its silence.
+            if isGap {
+                speakers.skip(seconds: Double(buffer.frameLength) / buffer.format.sampleRate)
+            } else {
+                speakers.append(buffer)
+            }
         }
         try await capture.start(bundlePrefixes: app.bundlePrefixes, appName: app.name)
         systemCapture = capture
