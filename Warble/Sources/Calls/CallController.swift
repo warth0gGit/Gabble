@@ -133,6 +133,9 @@ final class CallController: ObservableObject {
     private var voicesBeingChecked: Set<String> = []
     /// How much each voice had said when it was last compared.
     private var checkedAtTalk: [String: TimeInterval] = [:]
+    /// Who on file each unnamed voice sounded a bit like at its last check,
+    /// so "Who's this?" can wait for a recheck that may well name it.
+    private var checkCandidates: [String: [(name: String, distance: Float)]] = [:]
     /// A voice nobody recognised is compared again once it has said this
     /// much: five seconds of someone is often too little to know them by,
     /// and each extra stretch of speech makes them easier to tell apart
@@ -303,6 +306,7 @@ final class CallController: ObservableObject {
         voicesChecked = []
         voicesBeingChecked = []
         checkedAtTalk = [:]
+        checkCandidates = [:]
         askingWho = nil
         panelMinimized = false
         savedStats = nil
@@ -967,6 +971,10 @@ final class CallController: ObservableObject {
                 guard let self else { return }
                 self.voicesBeingChecked.remove(id)
                 self.voicesChecked.insert(id)
+                if let print = heardSoFar ?? embedding {
+                    // People on file only: waiting for someone already on this call only left more speech unnamed.
+                    self.checkCandidates[id] = VoiceMatcher.candidates(print, known: known)
+                }
                 let undecided = self.namesThisCall[id] == nil || self.nameConfidence[id] == .tentative
                 if let embedding, undecided, self.checkedAtTalk[id] != .infinity,
                    let guess = VoiceMatcher.guessInCall(embedding, onCall: onCall, saved: known, heard: heardSoFar) {
@@ -987,6 +995,9 @@ final class CallController: ObservableObject {
         let firstHeard = voiceSegments.map(\.speakerID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         guard let id = firstHeard.first(where: {
             namesThisCall[$0] == nil && voicesChecked.contains($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
+                // Sounds a bit like someone on file, and is rechecked soon: give that check a chance first.
+                && !VoiceMatcher.shouldWaitBeforeAsking(candidates: checkCandidates[$0] ?? [], talk: talk[$0] ?? 0,
+                                                        lastChecked: checkedAtTalk[$0], rechecks: Self.recheckAfter)
         }) else { return }
         ask(about: id)
     }
