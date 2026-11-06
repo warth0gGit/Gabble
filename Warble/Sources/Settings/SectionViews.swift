@@ -72,8 +72,8 @@ struct DictationView: View {
                 Text("When you finish, Warble presses Return after putting your words in, so a chat message sends without you checking it. In an email or document that adds a new line instead, so switch it off there if it gets in the way.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Toggle("Show the waveform in the text box", isOn: $appState.inFieldIndicator)
-                Text("While you talk, the Warble waveform and a timer appear right in the box you're typing into. Some apps don't say where their text box is; there, and with this off, a small capsule shows at the bottom of the screen instead.")
+                Toggle("Show the listening ball by my cursor", isOn: $appState.inFieldIndicator)
+                Text("While you talk, a small green ball pulses just after your cursor, and a ring circles it while Warble tidies your words. Some apps don't say where their text box is; there, and with this off, the ball shows at the bottom of the screen instead.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 if appState.dictationKey == .fn, let action = FnKeySetting.current, action != .doNothing {

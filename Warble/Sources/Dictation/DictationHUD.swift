@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The small floating capsule at the bottom of the screen while dictating:
-/// shows the mic is on, how loud you are and how long you've been talking.
-/// Words go straight into your app (as Wispr Flow does), not into the capsule.
+/// The listening ball at the bottom of the screen, used when Warble can't tell
+/// where your text box is (or the ball by the cursor is switched off).
+/// Words go straight into your app (as Wispr Flow does), not into the ball.
 /// It never takes focus, so text still goes to the app you were using.
 @MainActor
 final class DictationHUD {
@@ -46,50 +46,22 @@ struct DictationHUDView: View {
     @EnvironmentObject private var controller: DictationController
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Spacer(minLength: 0)
-            capsule
+            if case .preparing(let message) = controller.phase {
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(WarbleColor.idle)
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(WarbleColor.background.opacity(0.94), in: Capsule())
+            }
+            // The same listening ball as by the cursor, a little bigger.
+            ListeningBall(level: controller.level, phase: controller.phase, scale: 1.6)
+                .frame(width: 44, height: 44)
         }
         .frame(width: 420, height: 120, alignment: .bottom)
-    }
-
-    private var capsule: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(controller.phase == .listening ? WarbleColor.green : WarbleColor.idle)
-                .frame(width: 8, height: 8)
-                .shadow(color: WarbleColor.glow.opacity(controller.phase == .listening ? 0.8 : 0), radius: 4)
-            WaveformRibbon(level: controller.level, isActive: controller.phase == .listening, strands: 8)
-                .frame(width: 120, height: 26)
-            statusText
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(WarbleColor.idle)
-                .frame(minWidth: 40, alignment: .leading)
-        }
-        .padding(.leading, 10)
-        .padding(.trailing, 14)
-        .padding(.vertical, 6)
-        .background(WarbleColor.background.opacity(0.94), in: Capsule())
-        .overlay(Capsule().strokeBorder(WarbleColor.green.opacity(controller.phase == .listening ? 0.3 : 0.15), lineWidth: 1))
-        .shadow(color: WarbleColor.green.opacity(controller.phase == .listening ? 0.22 : 0), radius: 14)
         .environment(\.colorScheme, .dark)
-    }
-
-    @ViewBuilder
-    private var statusText: some View {
-        switch controller.phase {
-        case .listening:
-            if let start = controller.startedAt {
-                Text(start, style: .timer)
-            } else {
-                Text("0:00")
-            }
-        case .processing:
-            Text("Tidying…")
-        case .preparing(let message):
-            Text(message).lineLimit(1)
-        case .idle:
-            EmptyView()
-        }
     }
 }

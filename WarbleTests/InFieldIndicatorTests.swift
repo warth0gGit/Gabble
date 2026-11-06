@@ -2,31 +2,58 @@ import XCTest
 @testable import Warble
 
 final class InFieldIndicatorTests: XCTestCase {
-    func testAOneLineBoxIsCoveredWhole() {
-        let box = CGRect(x: 100, y: 700, width: 600, height: 36)
-        XCTAssertEqual(InFieldIndicator.area(field: box, caret: CGRect(x: 300, y: 710, width: 1, height: 16)), box)
+    private let reach = InFieldIndicator.reach
+    private let gap = InFieldIndicator.gap
+
+    func testBallSitsJustAfterTheCursorOnItsLine() {
+        let box = CGRect(x: 100, y: 700, width: 600, height: 80)
+        let caret = CGRect(x: 300, y: 710, width: 0, height: 16)
+        let center = InFieldIndicator.ballCenter(field: box, caret: caret, textAfter: false)
+        XCTAssertEqual(center, CGPoint(x: 300 + gap + reach, y: 718))
+        // Even at its biggest, the ball keeps the gap from the cursor.
+        XCTAssertEqual(center!.x - reach - caret.maxX, gap)
     }
 
-    func testATallBoxGetsAStripOnTheCursorLine() {
-        let box = CGRect(x: 0, y: 50, width: 800, height: 400)
-        let strip = InFieldIndicator.area(field: box, caret: CGRect(x: 400, y: 300, width: 1, height: 16))
-        XCTAssertEqual(strip?.height, InFieldIndicator.stripHeight)
-        XCTAssertEqual(strip?.midY, 308)
-        XCTAssertEqual(strip?.width, 800)
-        // Cursor at the very top: the strip stays inside the box.
-        XCTAssertEqual(InFieldIndicator.area(field: box, caret: CGRect(x: 0, y: 50, width: 1, height: 4))?.minY, 50)
-        // No cursor: the middle of the box.
-        XCTAssertEqual(InFieldIndicator.area(field: box, caret: nil)?.midY, box.midY)
+    func testBallGoesUnderTheCursorMidSentenceOrAtTheRightEdge() {
+        let box = CGRect(x: 100, y: 700, width: 600, height: 80)
+        let mid = CGRect(x: 300, y: 710, width: 0, height: 16)
+        XCTAssertEqual(InFieldIndicator.ballCenter(field: box, caret: mid, textAfter: true),
+                       CGPoint(x: 300, y: 726 + 2 + reach))
+        let edge = CGRect(x: 690, y: 710, width: 0, height: 16)
+        XCTAssertEqual(InFieldIndicator.ballCenter(field: box, caret: edge, textAfter: false),
+                       CGPoint(x: 690, y: 726 + 2 + reach))
     }
 
-    func testNothingKnownMeansTheCapsule() {
-        XCTAssertNil(InFieldIndicator.area(field: nil, caret: nil))
-        XCTAssertNil(InFieldIndicator.area(field: CGRect(x: 0, y: 0, width: 5, height: 5), caret: nil))
+    func testNoCursorUsesTheBoxTopRightOrBesideAThinBox() {
+        let tall = CGRect(x: 0, y: 50, width: 800, height: 120)
+        XCTAssertEqual(InFieldIndicator.ballCenter(field: tall, caret: nil, textAfter: false),
+                       CGPoint(x: 800 - 12 - reach, y: 50 + 12 + reach))
+        let thin = CGRect(x: 0, y: 50, width: 400, height: 24)
+        XCTAssertEqual(InFieldIndicator.ballCenter(field: thin, caret: nil, textAfter: false),
+                       CGPoint(x: 400 + gap + reach, y: 62))
+    }
+
+    func testACursorOutsideTheBoxIsIgnored() {
+        // Some web apps report the cursor at the top-left of the screen.
+        let box = CGRect(x: 400, y: 600, width: 500, height: 120)
+        let bogus = CGRect(x: 0, y: 0, width: 0, height: 16)
+        XCTAssertEqual(InFieldIndicator.ballCenter(field: box, caret: bogus, textAfter: false),
+                       CGPoint(x: 900 - 12 - reach, y: 600 + 12 + reach))
+    }
+
+    func testNothingKnownMeansTheBottomOfTheScreen() {
+        XCTAssertNil(InFieldIndicator.ballCenter(field: nil, caret: nil, textAfter: false))
+        XCTAssertNil(InFieldIndicator.ballCenter(field: CGRect(x: 0, y: 0, width: 5, height: 5), caret: nil, textAfter: false))
     }
 
     func testAccessibilityToWindowCoordinates() {
-        let rect = InFieldIndicator.cocoaRect(fromAccessibility: CGRect(x: 10, y: 100, width: 200, height: 50),
-                                              primaryScreenHeight: 1000)
-        XCTAssertEqual(rect, CGRect(x: 10, y: 850, width: 200, height: 50))
+        XCTAssertEqual(InFieldIndicator.cocoaPoint(fromAccessibility: CGPoint(x: 10, y: 100), primaryScreenHeight: 1000),
+                       CGPoint(x: 10, y: 900))
+    }
+
+    func testQuietSpeechStillMovesTheBall() {
+        XCTAssertEqual(ListeningBall.boosted(0), 0)
+        XCTAssertGreaterThan(ListeningBall.boosted(0.04), 0.25)
+        XCTAssertEqual(ListeningBall.boosted(5), 1)
     }
 }

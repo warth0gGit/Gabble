@@ -43,9 +43,9 @@ final class DictationController: ObservableObject {
     private let correctionWatcher = CorrectionWatcher()
     private var hud: DictationHUD?
     private var indicator: InFieldIndicator?
-    /// Where the in-box indicator goes for this dictation (Cocoa coordinates),
-    /// or nil to use the capsule at the bottom of the screen.
-    private var indicatorArea: CGRect?
+    /// Where the listening ball starts for this dictation (its center, in Cocoa
+    /// coordinates), or nil to show it at the bottom of the screen.
+    private var indicatorCenter: CGPoint?
     private var pressedAt: Date?
     /// When the key went down, by the key event's own clock.
     private var pressedEventTime: TimeInterval?
@@ -216,7 +216,7 @@ final class DictationController: ObservableObject {
         TextInserter.enableAccessibilityForFrontmostApp()
         typer = LivePhraseTyper()
         isLiveTyping = appState.liveTyping && testSink == nil && TextInserter.focusedFieldSupportsLiveEditing()
-        indicatorArea = appState.inFieldIndicator && testSink == nil ? Self.focusedTextArea() : nil
+        indicatorCenter = appState.inFieldIndicator && testSink == nil ? Self.focusedBallCenter() : nil
         phase = .preparing("Starting…")
         usingParakeet = appState.recognitionModel == .parakeet
         if appState.cleanupEnabled && SmartCleanup.isAvailable {
@@ -421,11 +421,11 @@ final class DictationController: ObservableObject {
             indicator?.hide()
             return
         }
-        if let area = indicatorArea {
-            // Shown in the text box itself, so no capsule.
+        if let center = indicatorCenter {
+            // Shown by the cursor, so nothing at the bottom of the screen.
             hud?.hide()
             if indicator == nil { indicator = InFieldIndicator(controller: self) }
-            indicator?.show(over: area)
+            indicator?.show(at: center)
         } else {
             indicator?.hide()
             if hud == nil { hud = DictationHUD(controller: self) }
@@ -433,11 +433,8 @@ final class DictationController: ObservableObject {
         }
     }
 
-    private static func focusedTextArea() -> CGRect? {
-        let geometry = TextInserter.focusedFieldGeometry()
-        guard let area = InFieldIndicator.area(field: geometry.field, caret: geometry.caret),
-              let primary = NSScreen.screens.first else { return nil }
-        return InFieldIndicator.cocoaRect(fromAccessibility: area, primaryScreenHeight: primary.frame.height)
+    private static func focusedBallCenter() -> CGPoint? {
+        TextInserter.focusedFieldGeometry().flatMap(InFieldIndicator.cocoaCenter(for:))
     }
 }
 
