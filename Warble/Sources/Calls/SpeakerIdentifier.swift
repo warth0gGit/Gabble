@@ -260,7 +260,15 @@ enum VoiceMatcher {
     /// Mid-call, the voice engine sometimes starts a new voice for someone
     /// already on the call. Prefer the people on this call, and only name
     /// someone who isn't on it when they're a much closer match.
-    static func matchInCall(_ embedding: [Float], onCall: [Voiceprint], saved: [Voiceprint]) -> String? {
+    /// - Parameters:
+    ///   - embedding: the voice's first few seconds (compared with the
+    ///     people on this call, who are fingerprinted the same way).
+    ///   - heard: everything the voice has said so far, if Warble has more
+    ///     than the first few seconds. Used for the people from earlier
+    ///     calls: more speech tells them apart much better (see docs).
+    static func matchInCall(_ embedding: [Float], onCall: [Voiceprint], saved: [Voiceprint],
+                            heard: [Float]? = nil) -> String? {
+        let whole = heard ?? embedding
         let present = Set(onCall.map { $0.name.lowercased() })
         let others = saved.filter { !present.contains($0.name.lowercased()) }
         let rankedOnCall = onCall.map { (name: $0.name, distance: distance(embedding, to: $0)) }
@@ -269,13 +277,97 @@ enum VoiceMatcher {
         let runnerUp = rankedOnCall.dropFirst()
             .first { $0.name.caseInsensitiveCompare(nearestOnCall?.name ?? "") != .orderedSame }
         let clearWinner = runnerUp.map { $0.distance - (nearestOnCall?.distance ?? 0) >= sameCallMargin } ?? true
-        let nearestOther = others.map { distance(embedding, to: $0) }.min() ?? 2
+        let nearestOther = others.map { distance(whole, to: $0) }.min() ?? 2
         if let nearestOnCall, nearestOnCall.distance <= sameCallDistance, clearWinner,
            !(nearestOther <= maxDistance && nearestOther + 0.15 < nearestOnCall.distance) {
             return nearestOnCall.name
         }
-        return match(embedding, known: saved)
+        return match(whole, known: saved)
     }
+
+    // MARK: - Suggestions and how sure Warble is
+
+    /// Someone further than `maxDistance` but within this is shown with a
+    /// question mark ("Matt?") rather than named outright or asked about cold.
+    static let tentativeDistance: Float = 0.55
+    /// …and must still be this much nearer than the next person.
+    static let tentativeMargin: Float = 0.05
+    /// The furthest a person on file can be and still be offered as a one-tap
+    /// suggestion on "Who's this?". Beyond this a voice is nearly always
+    /// someone else (see docs), so offering them would only mislead.
+    static let candidateDistance: Float = 0.65
+
+    /// The people on file this voice sounds most like, nearest first, for
+    /// one-tap suggestions on "Who's this?". Only people within
+    /// `candidateDistance`; each name once.
+    static func candidates(_ embedding: [Float], known: [Voiceprint], limit: Int = 3) -> [(name: String, distance: Float)] {
+        var seen = Set<String>()
+        return ranked(embedding, known)
+            .filter { $0.distance <= candidateDistance && seen.insert($0.name.lowercased()).inserted }
+            .prefix(max(0, limit))
+            .map { $0 }
+    }
+
+    /// Who this voice is, and how sure Warble is: `.recognised` when it
+    /// passes the strict test (`match`), `.tentative` when it's nearer one
+    /// person than anyone else but not close enough to be sure, nil when it
+    /// could be anyone.
+    static func guess(_ embedding: [Float], known: [Voiceprint]) -> VoiceGuess? {
+        let ranked = ranked(embedding, known)
+        guard let best = ranked.first else { return nil }
+        let runnerUp = ranked.dropFirst().first { $0.name.caseInsensitiveCompare(best.name) != .orderedSame }
+        let lead = (runnerUp?.distance ?? 2) - best.distance
+        if best.distance <= maxDistance, lead >= margin {
+            return VoiceGuess(name: best.name, distance: best.distance, confidence: .recognised)
+        }
+        if best.distance <= tentativeDistance, lead >= tentativeMargin {
+            return VoiceGuess(name: best.name, distance: best.distance, confidence: .tentative)
+        }
+        return nil
+    }
+
+    /// As `matchInCall`, with how sure Warble is. People already on this
+    /// call come first; a voice between `sameCallDistance` and
+    /// `tentativeDistance` of one of them (and clearly nearer them than
+    /// anyone else on the call) is a tentative match.
+    static func guessInCall(_ embedding: [Float], onCall: [Voiceprint], saved: [Voiceprint],
+                            heard: [Float]? = nil) -> VoiceGuess? {
+        let whole = heard ?? embedding
+        if let name = matchInCall(embedding, onCall: onCall, saved: saved, heard: heard) {
+            let distance = min(ranked(embedding, onCall).first { $0.name == name }?.distance ?? 2,
+                               ranked(whole, saved).first { $0.name == name }?.distance ?? 2)
+            return VoiceGuess(name: name, distance: distance, confidence: .recognised)
+        }
+        // Not sure enough to name them: at most a tentative guess, the nearer
+        // of the people on this call and the people on file.
+        let options = [guess(embedding, known: onCall), guess(whole, known: saved)].compactMap { $0 }
+        guard var nearest = options.min(by: { $0.distance < $1.distance }) else { return nil }
+        nearest.confidence = .tentative
+        return nearest
+    }
+
+    /// Everyone on file, nearest first.
+    private static func ranked(_ embedding: [Float], _ known: [Voiceprint]) -> [(name: String, distance: Float)] {
+        known.map { (name: $0.name, distance: distance(embedding, to: $0)) }.sorted { $0.distance < $1.distance }
+    }
+}
+
+/// How sure Warble is of the name it shows for a voice on a call.
+enum NameConfidence: String, Codable, Equatable {
+    /// You named them (or joined the voice to someone) on this call.
+    case confirmed
+    /// Warble recognised them clearly, from an earlier call or from earlier in this one.
+    case recognised
+    /// Sounds like them, but Warble isn't sure: shown as "Matt?".
+    case tentative
+}
+
+/// Warble's best guess at who a voice is.
+struct VoiceGuess: Equatable {
+    var name: String
+    /// How far the voice is from them (cosine distance; smaller is closer).
+    var distance: Float
+    var confidence: NameConfidence
 }
 
 /// Matches transcript phrases to voices. Pure, unit tested.

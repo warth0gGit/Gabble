@@ -115,3 +115,56 @@ final class ReviewPrintTests: XCTestCase {
         XCTAssertTrue(VoiceReview.prints(review: review, live: live, atLeast: 30).isEmpty, "too little speech")
     }
 }
+
+/// "Who's this?" suggestions and how sure Warble is of a name.
+final class VoiceGuessTests: XCTestCase {
+    /// A unit-length fingerprint at a chosen cosine distance from axis 0,
+    /// leaning towards `towards`.
+    private func voice(_ axis: Int, distance: Float = 0, towards other: Int = 7) -> [Float] {
+        var v = [Float](repeating: 0, count: 8)
+        let cos = 1 - distance
+        v[axis] = cos
+        v[other] = (1 - cos * cos).squareRoot()
+        return v
+    }
+
+    private let matt = Voiceprint(name: "Matt", embedding: [1, 0, 0, 0, 0, 0, 0, 0])
+    private let aj = Voiceprint(name: "AJ", embedding: [0, 1, 0, 0, 0, 0, 0, 0])
+
+    func testCandidatesAreTheNearestPeopleWithinReach() {
+        let near = voice(0, distance: 0.5)   // sounds a bit like Matt, nothing like AJ
+        let found = VoiceMatcher.candidates(near, known: [aj, matt])
+        XCTAssertEqual(found.map(\.name), ["Matt"], "AJ is too far to be worth offering")
+        XCTAssertEqual(found.first?.distance ?? 0, 0.5, accuracy: 0.001)
+        XCTAssertTrue(VoiceMatcher.candidates(voice(5), known: [aj, matt]).isEmpty, "nobody like them on file")
+        XCTAssertTrue(VoiceMatcher.candidates(near, known: [aj, matt], limit: 0).isEmpty)
+        // Each person once, however many recordings they have.
+        var twice = matt
+        twice.learn(voice(0, distance: 0.1))
+        XCTAssertEqual(VoiceMatcher.candidates(voice(0, distance: 0.05), known: [twice]).count, 1)
+    }
+
+    func testSureUnsureAndUnknown() {
+        XCTAssertEqual(VoiceMatcher.guess(voice(0, distance: 0.2), known: [matt, aj])?.confidence, .recognised)
+        let unsure = VoiceMatcher.guess(voice(0, distance: VoiceMatcher.maxDistance + 0.05), known: [matt, aj])
+        XCTAssertEqual(unsure?.name, "Matt")
+        XCTAssertEqual(unsure?.confidence, .tentative)
+        XCTAssertNil(VoiceMatcher.guess(voice(0, distance: VoiceMatcher.tentativeDistance + 0.05), known: [matt, aj]))
+        XCTAssertNil(VoiceMatcher.guess(voice(4), known: [matt, aj]))
+        XCTAssertNil(VoiceMatcher.guess(voice(0), known: []))
+        // A strict match is always at least a tentative one.
+        XCTAssertLessThan(VoiceMatcher.maxDistance, VoiceMatcher.tentativeDistance)
+        XCTAssertLessThan(VoiceMatcher.tentativeDistance, VoiceMatcher.candidateDistance)
+    }
+
+    func testOnACallAnUnsureRejoinIsTentative() {
+        let onCall = [Voiceprint(name: "Jordan", embedding: voice(2))]
+        let sure = VoiceMatcher.guessInCall(voice(2, distance: 0.1), onCall: onCall, saved: [matt])
+        XCTAssertEqual(sure, VoiceGuess(name: "Jordan", distance: sure?.distance ?? 0, confidence: .recognised))
+        let drifted = VoiceMatcher.guessInCall(voice(2, distance: VoiceMatcher.sameCallDistance + 0.05),
+                                               onCall: onCall, saved: [matt])
+        XCTAssertEqual(drifted?.name, "Jordan")
+        XCTAssertEqual(drifted?.confidence, .tentative, "close-ish to Jordan: shown as Jordan?, not named outright")
+        XCTAssertNil(VoiceMatcher.guessInCall(voice(5), onCall: onCall, saved: [matt]))
+    }
+}
