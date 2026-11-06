@@ -141,13 +141,17 @@ final class VoiceprintStore: ObservableObject {
     }
 
     /// Someone you named, or Warble clearly recognised, as they sounded on a
-    /// whole call. Skipped if it doesn't sound like what's on file for them,
-    /// so one mix-up can't spoil their voice. Returns the recording's label.
+    /// whole call. Skipped unless it clearly sounds like them and not like
+    /// anyone else on file (`VoiceMatcher.shouldLearn`), so one mix-up can't
+    /// spoil their voice, or someone else's. Returns the recording's label,
+    /// to undo it with `unlearn`.
+    /// - Parameter confidence: how the name was given on the call. Pass
+    ///   `.confirmed` only when you named them; a tentative name is never learned.
     @discardableResult
-    func reinforce(name: String, embedding: [Float]) -> UUID? {
+    func reinforce(name: String, embedding: [Float], confidence: NameConfidence = .recognised) -> UUID? {
         guard !embedding.isEmpty,
               let index = position(of: name),
-              VoiceMatcher.distance(embedding, to: voices[index]) <= VoiceMatcher.learnDistance else { return nil }
+              VoiceMatcher.shouldLearn(embedding, as: name, known: voices, confidence: confidence) else { return nil }
         let label = voices[index].learn(embedding)
         save()
         return label
@@ -222,9 +226,28 @@ enum VoiceMatcher {
         return 1 - dot / (normA.squareRoot() * normB.squareRoot())
     }
 
-    /// A whole-call recording of someone only joins what's on file for them
-    /// if it's at least this close (so a mix-up doesn't spoil their voice).
+    /// A whole-call recording of someone you named only joins what's on file
+    /// for them if it's at least this close (so a mix-up doesn't spoil their voice).
     static let learnDistance: Float = 0.5
+
+    /// Whether a whole-call recording should be learned as `name`. It must be
+    /// nearer them than anyone else on file by the usual margin (otherwise,
+    /// say, AJ lumped into Matt's voice would teach Warble that Matt sounds
+    /// like AJ, and next time neither would be recognised). Names you gave
+    /// may be up to `learnDistance` away; names Warble gave itself must pass
+    /// the strict test (`maxDistance`), so it can't slowly teach itself a
+    /// wrong voice. Tentative names are never learned.
+    static func shouldLearn(_ embedding: [Float], as name: String, known: [Voiceprint],
+                            confidence: NameConfidence) -> Bool {
+        let limit: Float
+        switch confidence {
+        case .confirmed: limit = learnDistance
+        case .recognised: limit = maxDistance
+        case .tentative: return false
+        }
+        guard let nearest = match(embedding, known: known, within: limit) else { return false }
+        return nearest.caseInsensitiveCompare(name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+    }
 
     /// How far a voice is from a remembered person: from their average over
     /// all the calls Warble has heard them on. Measured on the same people
@@ -282,7 +305,11 @@ enum VoiceMatcher {
         let runnerUp = rankedOnCall.dropFirst()
             .first { $0.name.caseInsensitiveCompare(nearestOnCall?.name ?? "") != .orderedSame }
         let clearWinner = runnerUp.map { $0.distance - (nearestOnCall?.distance ?? 0) >= sameCallMargin } ?? true
-        let nearestOther = others.map { distance(whole, to: $0) }.min() ?? 2
+        // Compared like with like: the people on this call were fingerprinted
+        // from their first few seconds, so the people on file are measured
+        // from this voice's first few seconds too (a print of more speech
+        // sits nearer everyone, which would unfairly favour them).
+        let nearestOther = others.map { distance(embedding, to: $0) }.min() ?? 2
         if let nearestOnCall, nearestOnCall.distance <= sameCallDistance, clearWinner,
            !(nearestOther <= maxDistance && nearestOther + 0.15 < nearestOnCall.distance) {
             return nearestOnCall.name
@@ -319,9 +346,11 @@ enum VoiceMatcher {
     }
 
     /// Who this voice is, and how sure Warble is: `.recognised` when it
-    /// passes the strict test (`match`), `.tentative` when it's nearer one
-    /// person than anyone else but not close enough to be sure, nil when it
-    /// could be anyone.
+    /// passes the strict test (`match`), `.tentative` when it's clearly nearer
+    /// one person than the next but not close enough to be sure, nil when it
+    /// could be anyone. A tentative guess needs someone to be nearer than: with
+    /// only one person to compare against, "nearer them than anyone else"
+    /// means nothing, so an unsure voice is asked about instead.
     static func guess(_ embedding: [Float], known: [Voiceprint]) -> VoiceGuess? {
         let ranked = ranked(embedding, known)
         guard let best = ranked.first else { return nil }
@@ -330,7 +359,7 @@ enum VoiceMatcher {
         if best.distance <= maxDistance, lead >= margin {
             return VoiceGuess(name: best.name, distance: best.distance, confidence: .recognised)
         }
-        if best.distance <= tentativeDistance, lead >= tentativeMargin {
+        if let runnerUp, best.distance <= tentativeDistance, runnerUp.distance - best.distance >= tentativeMargin {
             return VoiceGuess(name: best.name, distance: best.distance, confidence: .tentative)
         }
         return nil
@@ -350,10 +379,44 @@ enum VoiceMatcher {
         }
         // Not sure enough to name them: at most a tentative guess, the nearer
         // of the people on this call and the people on file.
-        let options = [guess(embedding, known: onCall), guess(whole, known: saved)].compactMap { $0 }
+        let options = [tentativeOnCall(embedding, onCall), guess(whole, known: saved)].compactMap { $0 }
         guard var nearest = options.min(by: { $0.distance < $1.distance }) else { return nil }
         nearest.confidence = .tentative
         return nearest
+    }
+
+    /// The most talk to wait for before asking about a voice that sounds a
+    /// bit like someone (see `shouldWaitBeforeAsking`).
+    static let waitBeforeAskingAtMost: TimeInterval = 20
+
+    /// Whether to hold off "Who's this?" for a voice that couldn't be named
+    /// yet, because its next check may well name it. True only when it sounds
+    /// a bit like someone on file or on this call (`candidates` isn't empty)
+    /// and its next check (the first of `rechecks` after `lastChecked`) is due
+    /// by `atMost` seconds of talk; otherwise ask now. A voice that sounds
+    /// like nobody is asked about straight away, as before. Pure, unit tested.
+    /// - Parameters:
+    ///   - candidates: `candidates(...)` for this voice, from everything it has said so far.
+    ///   - talk: seconds this voice has talked so far.
+    ///   - lastChecked: its talk total when it was last checked (nil: never).
+    ///   - rechecks: the talk totals at which a voice is checked again (the controller's `recheckAfter`).
+    static func shouldWaitBeforeAsking(candidates: [(name: String, distance: Float)], talk: TimeInterval,
+                                       lastChecked: TimeInterval?, rechecks: [TimeInterval],
+                                       atMost limit: TimeInterval = waitBeforeAskingAtMost) -> Bool {
+        guard !candidates.isEmpty, talk < limit else { return false }
+        let last = lastChecked ?? 0
+        guard let next = rechecks.filter({ $0 > last }).min() else { return false }
+        return next <= limit
+    }
+
+    /// Someone on this call the voice is clearly nearer than anyone else on
+    /// it, within `tentativeDistance`; needs two people on the call to compare.
+    private static func tentativeOnCall(_ embedding: [Float], _ onCall: [Voiceprint]) -> VoiceGuess? {
+        let ranked = ranked(embedding, onCall)
+        guard let best = ranked.first, best.distance <= tentativeDistance,
+              let runnerUp = ranked.dropFirst().first(where: { $0.name.caseInsensitiveCompare(best.name) != .orderedSame }),
+              runnerUp.distance - best.distance >= tentativeMargin else { return nil }
+        return VoiceGuess(name: best.name, distance: best.distance, confidence: .tentative)
     }
 
     /// Everyone on file, nearest first.
@@ -410,6 +473,19 @@ enum SpeakerAssigner {
     }
 }
 
+/// How much waiting audio goes to the voice engine at a time. Pure, unit tested.
+enum LiveChunks {
+    /// Seconds of audio the engine looks at in one go (see `SpeakerIdentifier`).
+    static let seconds: Double = 10
+
+    /// How many of `pending` samples to send now: during the call only whole
+    /// chunks of `chunk` samples, at the end of the call everything.
+    static func samplesToSend(pending: Int, chunk: Int, wholeChunksOnly: Bool) -> Int {
+        guard pending > 0, chunk > 0 else { return 0 }
+        return wholeChunksOnly ? pending / chunk * chunk : pending
+    }
+}
+
 /// Works out who is speaking in the other side of a call using FluidAudio's
 /// on-device speaker models (pyannote segmentation + WeSpeaker voice embeddings).
 /// Audio is processed in chunks while the call goes on, so new voices are
@@ -423,7 +499,7 @@ final class SpeakerIdentifier: @unchecked Sendable {
     /// at all, a third less speech left unnamed, and the slowest names came
     /// in about twice as fast, for about two seconds' more delay on average
     /// before a stretch of speech gets its name.
-    private let chunkSeconds: Double = 10
+    private let chunkSeconds: Double = LiveChunks.seconds
     /// Audio kept while the models download, at most ten minutes.
     private let maxPendingSeconds: Double = 600
 
@@ -548,8 +624,8 @@ final class SpeakerIdentifier: @unchecked Sendable {
     /// the next chunk; at the end of the call everything goes.
     private func flushLocked(wholeChunksOnly: Bool = false) {
         guard !pending.isEmpty, let diarizer else { return }
-        let size = Int(chunkSeconds * Self.sampleRate)
-        let count = wholeChunksOnly ? pending.count / size * size : pending.count
+        let count = LiveChunks.samplesToSend(pending: pending.count, chunk: Int(chunkSeconds * Self.sampleRate),
+                                             wholeChunksOnly: wholeChunksOnly)
         guard count > 0 else { return }
         let chunk = Array(pending.prefix(count))
         let offset = Double(processedSamples) / Self.sampleRate

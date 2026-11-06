@@ -193,7 +193,20 @@ struct VoiceLog: Codable, Equatable {
         }
     }
 
-    var version = 1
+    /// One thing the voice checks did during the call (checked a voice,
+    /// asked about it, were told its name...), if the controller noted it.
+    struct Decision: Codable, Equatable {
+        /// Seconds into the call.
+        var at: TimeInterval
+        var voice: String
+        /// What happened, e.g. "check", "ask", "named", "joined", "skipped".
+        var event: String
+        var name: String?
+        var distance: Float?
+        var confidence: NameConfidence?
+    }
+
+    var version = 2
     /// The settings the call was checked with.
     var settings: [String: Double]
     /// Every stretch of the others' speech as the live check heard it.
@@ -204,25 +217,40 @@ struct VoiceLog: Codable, Equatable {
     var review: [Stretch]?
     /// The names the saved transcript uses.
     var names: [String: String]
+    /// The label of each whole-call recording learned after the call, by
+    /// voice, so a name given by mistake can be fully undone afterwards
+    /// (`VoiceprintStore.unlearn`). Nil in logs from before build 43.
+    var learned: [String: UUID]?
+    /// What the voice checks did during the call, oldest first, if noted.
+    var decisions: [Decision]?
 
     init(live: [VoiceSegment], liveNames: [String: String], review: [VoiceSegment]?, names: [String: String],
-         settings: [String: Double]) {
+         settings: [String: Double], learned: [String: UUID]? = nil, decisions: [Decision]? = nil) {
         self.live = live.map(Stretch.init)
         self.liveNames = liveNames
         self.review = review?.map(Stretch.init)
         self.names = names
         self.settings = settings
+        self.learned = learned
+        self.decisions = decisions
     }
 
     /// The settings in force now.
     static var currentSettings: [String: Double] {
         [
+            "chunkSeconds": LiveChunks.seconds,
             "newVoiceDistance": Double(SpeakerIdentifier.newVoiceDistance),
+            "refineDistance": Double(SpeakerIdentifier.refineDistance),
             "maxDistance": Double(VoiceMatcher.maxDistance),
             "margin": Double(VoiceMatcher.margin),
+            "learnDistance": Double(VoiceMatcher.learnDistance),
             "sameCallDistance": Double(VoiceMatcher.sameCallDistance),
+            "sameCallMargin": Double(VoiceMatcher.sameCallMargin),
             "afterCallDistance": Double(VoiceMatcher.afterCallDistance),
             "tentativeDistance": Double(VoiceMatcher.tentativeDistance),
+            "tentativeMargin": Double(VoiceMatcher.tentativeMargin),
+            "candidateDistance": Double(VoiceMatcher.candidateDistance),
+            "waitBeforeAskingAtMost": VoiceMatcher.waitBeforeAskingAtMost,
             "splitterSameDistance": Double(VoiceSplitter.sameDistance),
         ]
     }

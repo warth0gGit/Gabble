@@ -68,10 +68,10 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
         let start = sampleBuffer.presentationTimeStamp.seconds
         let rate = buffer.format.sampleRate
         if start.isFinite, rate > 0 {
-            var missing = AudioGap.silentFrames(previousEnd: lastEnd, start: start, sampleRate: rate)
-            while missing > 0, let silence = Self.silence(frames: min(missing, Int(rate)), format: buffer.format) {
+            let missing = AudioGap.silentFrames(previousEnd: lastEnd, start: start, sampleRate: rate)
+            for frames in AudioGap.pieces(missing, sampleRate: rate) {
+                guard let silence = Self.silence(frames: frames, format: buffer.format) else { break }
                 onBuffer(silence)
-                missing -= Int(silence.frameLength)
             }
             lastEnd = start + Double(buffer.frameLength) / rate
         }
@@ -111,6 +111,12 @@ enum AudioGap {
     static let minimum: TimeInterval = 0.2
     /// Longer jumps are taken to be the clock being reset, not silence.
     static let maximum: TimeInterval = 600
+    /// The most silence put in for one gap. Every second of it goes through
+    /// the recording, the voice check and the transcriber at once, so a very
+    /// long gap would mean a burst of work and memory; past this, the voices
+    /// after the gap are off by the extra (a minute of silence is ~23 MB at
+    /// the call app's 48 kHz stereo).
+    static let mostFilled: TimeInterval = 60
 
     /// Frames of silence to add before a buffer that starts at `start`
     /// (seconds on the capture clock), when the previous one ended at `previousEnd`.
@@ -118,6 +124,13 @@ enum AudioGap {
         guard let previousEnd, sampleRate > 0 else { return 0 }
         let gap = start - previousEnd
         guard gap >= minimum, gap <= maximum else { return 0 }
-        return Int((gap * sampleRate).rounded())
+        return Int((min(gap, mostFilled) * sampleRate).rounded())
+    }
+
+    /// `frames` of silence split into buffers of at most a second each.
+    static func pieces(_ frames: Int, sampleRate: Double) -> [Int] {
+        let size = max(1, Int(sampleRate))
+        guard frames > 0 else { return [] }
+        return stride(from: 0, to: frames, by: size).map { min(size, frames - $0) }
     }
 }

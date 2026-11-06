@@ -157,16 +157,40 @@ final class VoiceGuessTests: XCTestCase {
         XCTAssertLessThan(VoiceMatcher.tentativeDistance, VoiceMatcher.candidateDistance)
     }
 
-    func testOnACallAnUnsureRejoinIsTentative() {
+    func testOnACallAnUnsureRejoinIsAskedAboutNotGuessed() {
+        // Only one person on the call: "nearer Jordan than anyone else" means
+        // nothing, and the voice engine already judged this voice not to be
+        // Jordan, so it is asked about rather than shown as "Jordan?".
         let onCall = [Voiceprint(name: "Jordan", embedding: voice(2))]
         let sure = VoiceMatcher.guessInCall(voice(2, distance: 0.1), onCall: onCall, saved: [matt])
         XCTAssertEqual(sure, VoiceGuess(name: "Jordan", distance: sure?.distance ?? 0, confidence: .recognised))
-        let drifted = VoiceMatcher.guessInCall(voice(2, distance: VoiceMatcher.sameCallDistance + 0.05),
-                                               onCall: onCall, saved: [matt])
-        XCTAssertEqual(drifted?.name, "Jordan")
-        XCTAssertEqual(drifted?.confidence, .tentative, "close-ish to Jordan: shown as Jordan?, not named outright")
+        let drifted = voice(2, distance: VoiceMatcher.sameCallDistance + 0.05)
+        XCTAssertNil(VoiceMatcher.guessInCall(drifted, onCall: onCall, saved: [matt]))
         XCTAssertNil(VoiceMatcher.guessInCall(voice(5), onCall: onCall, saved: [matt]))
     }
+
+    func testATentativeGuessNeedsSomeoneToBeNearerThan() {
+        let unsure = voice(0, distance: VoiceMatcher.maxDistance + 0.03)
+        XCTAssertNil(VoiceMatcher.guess(unsure, known: [matt]), "nobody else to compare with")
+        XCTAssertEqual(VoiceMatcher.guess(unsure, known: [matt, aj])?.confidence, .tentative)
+        XCTAssertEqual(VoiceMatcher.guess(voice(0, distance: 0.2), known: [matt])?.confidence, .recognised,
+                       "a clear match is still a match")
+    }
+
+    func testPeopleOnFileAreComparedLikeForLikeWithPeopleOnTheCall() {
+        // First seconds: 0.35 from Jordan (on the call), 0.42 from Matt (on file).
+        // Everything said since: much nearer Matt, as longer prints sit nearer everyone.
+        let jordan = Voiceprint(name: "Jordan", embedding: voice(2))
+        let first = Self.unit([0.58, 0, 0.65, 0, 0, 0, 0, 0.49])
+        let heard = Self.unit([0.85, 0, 0.3, 0, 0, 0, 0, 0.43])
+        XCTAssertEqual(VoiceMatcher.distance(first, jordan.embedding), 0.35, accuracy: 0.02)
+        XCTAssertEqual(VoiceMatcher.distance(first, matt.embedding), 0.42, accuracy: 0.02)
+        XCTAssertLessThan(VoiceMatcher.distance(heard, matt.embedding), 0.2)
+        XCTAssertEqual(VoiceMatcher.matchInCall(first, onCall: [jordan], saved: [matt, aj], heard: heard), "Jordan",
+                       "Matt from the first seconds isn't clearly nearer than Jordan")
+    }
+
+    private static func unit(_ v: [Float]) -> [Float] { VoiceSplitter.unit(v) }
 
     func testOneOddRecordingDoesNotMakeAStrangerSoundLikeThem() {
         // Three calls of Matt, and one recording that was really someone else.
@@ -203,6 +227,19 @@ final class VoiceLogTests: XCTestCase {
         XCTAssertEqual(decoded, log)
         XCTAssertEqual(decoded.live.map(\.voice), ["S1", "S2"])
         XCTAssertEqual(decoded.settings["maxDistance"] ?? 0, Double(VoiceMatcher.maxDistance), accuracy: 0.0001)
+        XCTAssertEqual(decoded.settings["chunkSeconds"] ?? 0, LiveChunks.seconds, accuracy: 0.0001)
+    }
+
+    func testTheLogKeepsWhatWasLearnedSoItCanBeUndone() throws {
+        let label = UUID()
+        let log = VoiceLog(live: [], liveNames: [:], review: nil, names: [:], settings: [:], learned: ["S1": label],
+                           decisions: [.init(at: 12, voice: "S2", event: "ask", name: nil, distance: 0.52, confidence: nil)])
+        let decoded = try JSONDecoder().decode(VoiceLog.self, from: JSONEncoder().encode(log))
+        XCTAssertEqual(decoded.learned?["S1"], label)
+        XCTAssertEqual(decoded.decisions?.first?.event, "ask")
+        // A log from build 43's first version (no learned labels or decisions) still reads.
+        let old = #"{"version":1,"settings":{},"live":[],"liveNames":{},"names":{}}"#
+        XCTAssertNil(try JSONDecoder().decode(VoiceLog.self, from: Data(old.utf8)).learned)
     }
 }
 
@@ -222,5 +259,101 @@ final class LearningPrintTests: XCTestCase {
         XCTAssertLessThan(VoiceMatcher.distance(print ?? [], jordan), 0.01, "S2 said more, but drifted: S1 is learned")
         XCTAssertNil(splitter.callPrint(of: "Jordan", names: ["S2": "Jordan"]))
         XCTAssertNil(splitter.callPrint(of: "Priya", names: ["S1": "Jordan"]))
+    }
+}
+
+/// What Warble learns of someone's voice after a call.
+final class LearningCheckTests: XCTestCase {
+    private func at(_ angle: Float) -> [Float] { [cos(angle), sin(angle), 0] }
+
+    @MainActor
+    func testAVoiceLumpedIntoSomeoneElseIsNotLearnedAsThem() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = VoiceprintStore(fileURL: url)
+        let matt: [Float] = [1, 0, 0]
+        let aj = at(1.2)                      // about 0.64 from Matt
+        store.remember(name: "Matt", embedding: matt)
+        store.remember(name: "AJ", embedding: aj)
+        // AJ's voice, lumped in with Matt's: 0.48 from Matt, 0.15 from AJ.
+        let lumped = at(1.2 - acos(0.85))
+        XCTAssertEqual(VoiceMatcher.distance(lumped, aj), 0.15, accuracy: 0.01)
+        XCTAssertLessThan(VoiceMatcher.distance(lumped, matt), VoiceMatcher.learnDistance)
+        XCTAssertNil(store.reinforce(name: "Matt", embedding: lumped, confidence: .confirmed), "it sounds like AJ")
+        XCTAssertEqual(store.voices.first { $0.name == "Matt" }?.prints.count, 1)
+        XCTAssertNotNil(store.reinforce(name: "Matt", embedding: at(0.2), confidence: .confirmed))
+    }
+
+    func testNamesWarbleGaveItselfMustPassTheStrictTest() {
+        let matt = Voiceprint(name: "Matt", embedding: [1, 0, 0])
+        let aj = Voiceprint(name: "AJ", embedding: [0, 1, 0])
+        // Leaning away from both of them, towards nobody on file.
+        let near: [Float] = [0.8, 0, 0.6], loose: [Float] = [0.52, 0, 0.854]
+        XCTAssertTrue(VoiceMatcher.shouldLearn(near, as: "matt", known: [matt, aj], confidence: .recognised))
+        XCTAssertFalse(VoiceMatcher.shouldLearn(loose, as: "Matt", known: [matt, aj], confidence: .recognised))
+        XCTAssertTrue(VoiceMatcher.shouldLearn(loose, as: "Matt", known: [matt, aj], confidence: .confirmed),
+                      "you named him: a looser fit is fine")
+        XCTAssertFalse(VoiceMatcher.shouldLearn(near, as: "Matt", known: [matt, aj], confidence: .tentative))
+        XCTAssertFalse(VoiceMatcher.shouldLearn(near, as: "Priya", known: [matt, aj], confidence: .confirmed))
+    }
+
+    func testLabelsStayWithTheirRecordingsWhenTheOldestAreDropped() {
+        var a = Voiceprint(name: "A", embedding: [1, 0, 0])
+        var labels: [UUID?] = []
+        for i in 0..<Voiceprint.maxSamples { labels.append(a.learn([1, Float(i + 1) * 0.01, 0])) }
+        XCTAssertEqual(a.prints.count, Voiceprint.maxSamples, "the very first recording has been dropped")
+        var b = Voiceprint(name: "B", embedding: [0, 1, 0])
+        let bLabel = b.learn([0, 1, 0.1])
+        a.absorb(b)
+        XCTAssertEqual(a.prints.count, Voiceprint.maxSamples)
+        XCTAssertEqual(a.sampleIDs?.count, a.prints.count)
+        XCTAssertTrue(a.has(bLabel!))
+        XCTAssertFalse(a.has(labels[0]!), "dropped with its recording")
+        // Each remaining label still takes out its own recording.
+        let before = a.prints
+        let target = labels[5]!
+        let position = a.sampleIDs!.firstIndex(of: target)!
+        XCTAssertTrue(a.unlearn(target))
+        var expected = before
+        expected.remove(at: position)
+        XCTAssertEqual(a.prints, expected)
+    }
+}
+
+/// When to ask "Who's this?".
+final class AskWaitTests: XCTestCase {
+    func testWaitsForTheNextCheckOnlyWhenTheVoiceSoundsLikeSomeone() {
+        let like = [(name: "Matt", distance: Float(0.55))]
+        let rechecks: [TimeInterval] = [8, 12, 20, 30, 45, 60, 90]
+        XCTAssertTrue(VoiceMatcher.shouldWaitBeforeAsking(candidates: like, talk: 5, lastChecked: 5, rechecks: rechecks))
+        XCTAssertTrue(VoiceMatcher.shouldWaitBeforeAsking(candidates: like, talk: 13, lastChecked: 12, rechecks: rechecks))
+        XCTAssertFalse(VoiceMatcher.shouldWaitBeforeAsking(candidates: like, talk: 21, lastChecked: 20, rechecks: rechecks),
+                       "waited long enough")
+        XCTAssertFalse(VoiceMatcher.shouldWaitBeforeAsking(candidates: [], talk: 5, lastChecked: 5, rechecks: rechecks),
+                       "sounds like nobody: ask now")
+        XCTAssertFalse(VoiceMatcher.shouldWaitBeforeAsking(candidates: like, talk: 5, lastChecked: 5, rechecks: []))
+        XCTAssertTrue(VoiceMatcher.shouldWaitBeforeAsking(candidates: like, talk: 6, lastChecked: nil, rechecks: rechecks))
+        XCTAssertTrue(VoiceMatcher.shouldWaitBeforeAsking(candidates: like, talk: 25, lastChecked: 20, rechecks: [30], atMost: 30))
+    }
+}
+
+/// Audio plumbing for the voice check.
+final class ChunkAndGapTests: XCTestCase {
+    func testOnlyWholeChunksGoDuringTheCall() {
+        let chunk = 160_000
+        XCTAssertEqual(LiveChunks.samplesToSend(pending: 159_999, chunk: chunk, wholeChunksOnly: true), 0)
+        XCTAssertEqual(LiveChunks.samplesToSend(pending: 160_000, chunk: chunk, wholeChunksOnly: true), 160_000)
+        XCTAssertEqual(LiveChunks.samplesToSend(pending: 330_000, chunk: chunk, wholeChunksOnly: true), 320_000)
+        XCTAssertEqual(LiveChunks.samplesToSend(pending: 330_000, chunk: chunk, wholeChunksOnly: false), 330_000, "end of call")
+        XCTAssertEqual(LiveChunks.samplesToSend(pending: 0, chunk: chunk, wholeChunksOnly: false), 0)
+    }
+
+    func testSilenceGoesInOneSecondPiecesAndLongGapsAreCapped() {
+        XCTAssertEqual(AudioGap.pieces(120_000, sampleRate: 48_000), [48_000, 48_000, 24_000])
+        XCTAssertEqual(AudioGap.pieces(48_000, sampleRate: 48_000), [48_000])
+        XCTAssertEqual(AudioGap.pieces(0, sampleRate: 48_000), [])
+        XCTAssertEqual(AudioGap.pieces(5, sampleRate: 48_000).reduce(0, +), 5)
+        let long = AudioGap.silentFrames(previousEnd: 10, start: 310, sampleRate: 48_000)
+        XCTAssertEqual(long, Int(AudioGap.mostFilled * 48_000), "five minutes quiet: at most a minute filled")
     }
 }

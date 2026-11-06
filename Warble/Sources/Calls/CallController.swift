@@ -600,7 +600,8 @@ final class CallController: ObservableObject {
             guard let name = names[id], !learned.contains(name.lowercased()), !sharedNames.contains(name.lowercased()),
                   let print = reviewPrints?[id] ?? heard.splitter.callPrint(of: name, names: liveNames) else { continue }
             learned.insert(name.lowercased())
-            if let label = voices.reinforce(name: name, embedding: print) { learnedAtSave[id] = label }
+            let given: NameConfidence = namedLive.contains(name.lowercased()) ? .confirmed : .recognised
+            if let label = voices.reinforce(name: name, embedding: print, confidence: given) { learnedAtSave[id] = label }
         }
         // With no review, a guessed voice keeps its guess in the transcript, marked "?".
         if reviewHeard == nil {
@@ -608,7 +609,7 @@ final class CallController: ObservableObject {
         }
         // What the voice checks heard and decided, kept with the recordings.
         VoiceLog(live: heard.splitter.segments, liveNames: liveNames, review: reviewHeard, names: names,
-                 settings: VoiceLog.currentSettings).save(in: recorder.folder)
+                 settings: VoiceLog.currentSettings, learned: learnedAtSave).save(in: recorder.folder)
         // Your mic picks up the others through your speakers; drop those echoes.
         finished.segments = EchoFilter.removeEchoes(from: finished.segments)
         finished.relabel { [self] segment in label(for: segment, voices: voicesHeard, names: names) }
