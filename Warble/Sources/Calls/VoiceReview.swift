@@ -3,7 +3,7 @@ import Foundation
 
 /// After a call, the voice engine goes over the whole recording of the other
 /// side in one go. That tells people apart much better than the live check,
-/// which only ever hears six seconds at a time. The names you gave during the
+/// which only ever hears ten seconds at a time. The names you gave during the
 /// call are then put on the right voices (see VoiceReview).
 final class OfflineVoices: @unchecked Sendable {
     static let shared = OfflineVoices()

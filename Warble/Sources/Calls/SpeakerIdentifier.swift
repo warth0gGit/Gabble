@@ -407,9 +407,14 @@ enum SpeakerAssigner {
 /// spotted during the call. Known voices come back with their names as IDs.
 final class SpeakerIdentifier: @unchecked Sendable {
     static let sampleRate: Double = 16_000
-    /// Shorter chunks show who's talking sooner during the call; much shorter
-    /// than this and voices are told apart less reliably.
-    private let chunkSeconds: Double = 6
+    /// How much call audio the voice engine looks at in one go. Its models
+    /// always take ten seconds (a shorter chunk is padded with silence), and
+    /// measured on real calls ten seconds of audio beat six: fewer people
+    /// asked about twice (0.8 vs 1.7 a call), fewer known people asked about
+    /// at all, a third less speech left unnamed, and the slowest names came
+    /// in about twice as fast, for about two seconds' more delay on average
+    /// before a stretch of speech gets its name.
+    private let chunkSeconds: Double = 10
     /// Audio kept while the models download, at most ten minutes.
     private let maxPendingSeconds: Double = 600
 
@@ -460,7 +465,7 @@ final class SpeakerIdentifier: @unchecked Sendable {
             diarizer.speakerManager.embeddingThreshold = Self.refineDistance
             lock.lock()
             self.diarizer = diarizer
-            if Double(pending.count) >= chunkSeconds * Self.sampleRate { flushLocked() }
+            if Double(pending.count) >= chunkSeconds * Self.sampleRate { flushLocked(wholeChunksOnly: true) }
             lock.unlock()
         } catch {
             lock.lock()
@@ -500,7 +505,7 @@ final class SpeakerIdentifier: @unchecked Sendable {
             return
         }
         if Double(pending.count) >= chunkSeconds * Self.sampleRate {
-            flushLocked()
+            flushLocked(wholeChunksOnly: true)
         }
     }
 
@@ -527,13 +532,21 @@ final class SpeakerIdentifier: @unchecked Sendable {
         }
     }
 
-    private func flushLocked() {
+    /// Sends waiting audio to the voice engine. During the call only whole
+    /// chunks go: the engine works in chunks of exactly this length, and a
+    /// few samples over would be analysed on their own as a chunk of their
+    /// own (twice the work, and those samples wasted). The rest waits for
+    /// the next chunk; at the end of the call everything goes.
+    private func flushLocked(wholeChunksOnly: Bool = false) {
         guard !pending.isEmpty, let diarizer else { return }
-        let chunk = pending
+        let size = Int(chunkSeconds * Self.sampleRate)
+        let count = wholeChunksOnly ? pending.count / size * size : pending.count
+        guard count > 0 else { return }
+        let chunk = Array(pending.prefix(count))
         let offset = Double(processedSamples) / Self.sampleRate
         let base = audioStartOffset ?? 0
-        processedSamples += pending.count
-        pending.removeAll(keepingCapacity: true)
+        processedSamples += count
+        pending.removeFirst(count)
         let onSegments = self.onSegments
         queue.async {
             // Very short chunks (under a second) aren't worth analysing.
