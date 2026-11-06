@@ -977,7 +977,9 @@ final class CallController: ObservableObject {
                 }
                 let undecided = self.namesThisCall[id] == nil || self.nameConfidence[id] == .tentative
                 if let embedding, undecided, self.checkedAtTalk[id] != .infinity,
-                   let guess = VoiceMatcher.guessInCall(embedding, onCall: onCall, saved: known, heard: heardSoFar) {
+                   let guess = VoiceMatcher.guessInCall(embedding, onCall: onCall, saved: known, heard: heardSoFar),
+                   guess.confidence != .tentative || !self.nameTaken(guess.name, except: id) {
+                    if guess.confidence != .tentative { self.dropGuesses(of: guess.name, except: [id]) }
                     self.namesThisCall[id] = guess.name
                     self.nameConfidence[id] = guess.confidence
                     // Recognised (or at least a good guess) now they've said more: no need to ask.
@@ -1111,6 +1113,23 @@ final class CallController: ObservableObject {
         assign(guessed.sorted(), name: name, learnFrom: latest)
     }
 
+    /// Whether a voice other than `id` already shows `name`, sure or guessed.
+    /// A guess ("Matt?") may only go to one voice, and never next to a voice
+    /// that is Matt for sure: that would show two Matts for one person.
+    private func nameTaken(_ name: String, except id: String) -> Bool {
+        namesThisCall.contains { $0.key != id && $0.value.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// Takes the guess `name` off every voice but `kept`, now that a voice is
+    /// that person for sure. Those voices are asked about instead.
+    private func dropGuesses(of name: String, except kept: [String]) {
+        for (id, other) in namesThisCall where !kept.contains(id) && nameConfidence[id] == .tentative
+            && other.caseInsensitiveCompare(name) == .orderedSame {
+            namesThisCall[id] = nil
+            nameConfidence[id] = nil
+        }
+    }
+
     /// Gives `ids` a name you chose, learns the voice (from `learnFrom`) and
     /// keeps what's needed to undo it.
     private func assign(_ ids: [String], name: String, learnFrom: String) {
@@ -1123,6 +1142,7 @@ final class CallController: ObservableObject {
             skippedVoices.remove(id)
             deferredVoices.remove(id)
         }
+        dropGuesses(of: name, except: ids)
         lastNaming = naming
         refreshLiveSpeakers()
         let namingID = naming.id
