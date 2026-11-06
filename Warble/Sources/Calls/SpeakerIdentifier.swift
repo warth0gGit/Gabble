@@ -548,13 +548,16 @@ enum EngineClock {
 final class SpeakerIdentifier: @unchecked Sendable {
     static let sampleRate: Double = 16_000
     /// How much call audio the voice engine looks at in one go (see
-    /// `LiveChunks.seconds`). Its models always take ten seconds and pad a
-    /// shorter chunk with silence. Replaying real calls through the same
-    /// models, six seconds plus four of silence made everyone's voice come
-    /// out alike, and most speech ended up under one voice (58-78% under a
-    /// wrong name, against 5-7% with ten seconds). How badly depends on how
-    /// the Mac's copy of the model treats silence, which couldn't be checked;
-    /// the cost is about two seconds' more delay before speech gets its name.
+    /// `LiveChunks.seconds`); the engine is set to the same length. Ten
+    /// seconds is FluidAudio's default and what its models were made for.
+    /// Replaying 12 real calls through the same models, six- and five-second
+    /// chunks named about as much speech wrongly but split each person into
+    /// more voices (3.4 and 4.0 against 2.2), so more speech went unnamed
+    /// (+0.7 to +3.3 points) and the same person was asked about twice more
+    /// often (about 1.3-2 more times on a fresh call). Shorter chunks would
+    /// give names about two seconds sooner. (Before this build Warble sent six seconds to an engine
+    /// set to ten, so each chunk ended in four seconds of digital silence,
+    /// which in the replay made voices in that chunk sound much more alike.)
     private let chunkSeconds: Double = LiveChunks.seconds
     /// Audio kept while the models download, at most ten minutes.
     private let maxPendingSeconds: Double = 600
