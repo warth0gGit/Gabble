@@ -253,6 +253,24 @@ final class VoiceLogTests: XCTestCase {
 }
 
 final class LearningPrintTests: XCTestCase {
+    /// The engine started a second voice for Jordan, Warble took it to be
+    /// him, and then two minutes of someone else were lumped in: most of
+    /// "Jordan" is now someone else, though the whole-call print is still
+    /// within 0.4 of how he first sounded. Nothing is learned from it.
+    func testAVoiceThatIsMostlySomeoneElseIsNotLearned() {
+        var splitter = VoiceSplitter()
+        let jordan: [Float] = [1, 0, 0]
+        let lumpedIn: [Float] = [0.505, 0.863, 0]
+        splitter.add((0..<4).map { VoiceSegment(speakerID: "S1", start: Double($0) * 6, end: Double($0) * 6 + 6, embedding: jordan) })
+        splitter.add((0..<3).map { VoiceSegment(speakerID: "S2", start: 30 + Double($0) * 3, end: 33 + Double($0) * 3, embedding: jordan) })
+        splitter.add((0..<20).map { VoiceSegment(speakerID: "S2", start: 40 + Double($0) * 6, end: 46 + Double($0) * 6,
+                                                 embedding: lumpedIn) })
+        XCTAssertEqual(Set(splitter.segments.map(\.speakerID)), ["S1"], "S2 was taken to be Jordan")
+        let whole = splitter.callPrint(for: "S1") ?? []
+        XCTAssertLessThan(VoiceMatcher.distance(whole, jordan), VoiceSplitter.steadyDistance, "the old check alone lets it through")
+        XCTAssertNil(splitter.callPrint(of: "Jordan", names: ["S1": "Jordan", "S2": "Jordan"]))
+    }
+
     func testTheVoiceThatStayedOnePersonIsLearned() {
         var splitter = VoiceSplitter()
         let jordan: [Float] = [1, 0, 0]

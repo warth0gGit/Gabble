@@ -70,6 +70,52 @@ final class VoiceSplitterTests: XCTestCase {
         XCTAssertEqual(ids(splitter), ["S1", "S1", "S2", "S2", "S2"])
     }
 
+    /// The voice log keeps what the engine called each stretch, so a replay
+    /// can see where Warble took a new engine voice to be someone else.
+    func testEachStretchKeepsTheEnginesVoice() throws {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(jordan, 3, 6), say([1, 0.2, 0, 0], 7, 10, engine: "S3")])
+        XCTAssertEqual(ids(splitter), ["S1", "S1", "S1"])
+        XCTAssertEqual(splitter.segments.map(\.engineID), ["S1", "S1", "S3"])
+        let log = VoiceLog(live: splitter.segments, liveNames: [:], review: nil, names: [:], settings: [:])
+        let decoded = try JSONDecoder().decode(VoiceLog.self, from: JSONEncoder().encode(log))
+        XCTAssertEqual(decoded.live.map(\.engine), ["S1", "S1", "S3"])
+        // A log written before stretches kept it still reads.
+        let old = #"{"version":2,"settings":{},"live":[{"voice":"S1","start":0,"end":3,"print":[]}],"liveNames":{},"names":{}}"#
+        XCTAssertNil(try JSONDecoder().decode(VoiceLog.self, from: Data(old.utf8)).live.first?.engine)
+    }
+
+    /// Jordan was already heard as two voices (S1, and S1#2 when he moved
+    /// to his headset). A new engine voice that sounds like him is as near
+    /// both, which on its own looks unclear; with the names given, both are
+    /// Jordan, so it is him.
+    func testSomeoneHeardAsTwoVoicesStillCountsAsOnePerson() {
+        let headset: [Float] = [0.45, 0.893, 0, 0]
+        let between: [Float] = [1.45, 0.893, 0, 0]
+        func call(names: [String: String]) -> [String] {
+            var splitter = VoiceSplitter()
+            splitter.add([say(jordan, 0, 3), say(jordan, 3, 6), say(jordan, 6, 9)])
+            splitter.add([say(headset, 10, 13), say(headset, 13, 16)])
+            splitter.names = names
+            splitter.add([say(between, 17, 20, engine: "S2")])
+            return ids(splitter)
+        }
+        XCTAssertEqual(call(names: [:]).suffix(3), ["S1#2", "S1#2", "S2"])
+        XCTAssertTrue(["S1", "S1#2"].contains(call(names: ["S1": "Jordan", "S1#2": "jordan"]).last ?? ""))
+    }
+
+    /// A new engine voice taken to be Jordan: its short bits follow what it
+    /// was last heard as, not whoever else the engine's first voice is now.
+    func testShortStretchesFollowTheirOwnEngineVoice() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(jordan, 3, 6), say(jordan, 6, 9)])
+        splitter.add([say(aj, 10, 13), say(aj, 13, 16)])              // S1#2 inside S1
+        splitter.add([say([1, 0.2, 0, 0], 17, 20, engine: "S3")])    // taken to be Jordan (S1)
+        splitter.add([say(aj, 20, 23)])                               // S1 is now hearing AJ
+        splitter.add([say(jordan, 23, 24, engine: "S3")])            // a short bit from S3
+        XCTAssertEqual(ids(splitter).suffix(3), ["S1", "S1#2", "S1"])
+    }
+
     func testANewPersonStaysNew() {
         var splitter = VoiceSplitter()
         splitter.add([say(jordan, 0, 3), say(jordan, 3, 6)])

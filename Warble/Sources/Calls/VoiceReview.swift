@@ -184,12 +184,17 @@ struct VoiceLog: Codable, Equatable {
         var start: TimeInterval
         var end: TimeInterval
         var print: [Float]
+        /// The voice the engine gave it. Where `voice` is neither this nor a
+        /// split of it ("S3#2" of "S3"), Warble took a new engine voice to be
+        /// someone heard earlier. Missing in older logs.
+        var engine: String?
 
         init(_ segment: VoiceSegment) {
             voice = segment.speakerID
             start = segment.start
             end = segment.end
             print = segment.embedding
+            engine = segment.engineID
         }
     }
 
