@@ -184,7 +184,7 @@ struct VoiceSplitter {
         // Nearest voice per person (a named person's voices count as one,
         // unless that name is on two voices that sound nothing alike).
         let named = anchors.compactMap { id, anchor in
-            names[id].map { (name: $0, print: anchor.sum) }
+            anchor.seconds >= 2 ? names[id].map { (name: $0, print: anchor.sum) } : nil
         }
         let mixedUp = VoiceMatcher.conflictingNames(named)
         var nearest: [String: (id: String, distance: Float)] = [:]
