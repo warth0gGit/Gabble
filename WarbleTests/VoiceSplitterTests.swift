@@ -48,6 +48,44 @@ final class VoiceSplitterTests: XCTestCase {
         XCTAssertEqual(ids(splitter), ["S1", "S2"])
     }
 
+    /// Jonny, build 42: "it thinks an existing, identified speaker is
+    /// suddenly a new speaker". The engine started a new voice for Jordan.
+    func testSomeoneAlreadyHeardIsNotANewVoice() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(jordan, 3, 6), say(aj, 6, 9, engine: "S2")])
+        let jordanAgain: [Float] = [1, 0.2, 0, 0]
+        splitter.add([say(jordanAgain, 10, 11, engine: "S3")])
+        XCTAssertEqual(ids(splitter).last, "S3", "too short to tell yet")
+        splitter.add([say(jordanAgain, 11, 14, engine: "S3"), say(jordanAgain, 14, 16, engine: "S3")])
+        XCTAssertEqual(ids(splitter), ["S1", "S1", "S2", "S1", "S1", "S1"], "his short first stretch too")
+        // Someone new after that is still told apart from him.
+        splitter.add([say(aj, 17, 20, engine: "S3"), say(aj, 20, 23, engine: "S3")])
+        XCTAssertEqual(ids(splitter).suffix(2), ["S1#2", "S1#2"])
+    }
+
+    func testAVoiceAlreadyOnShowIsLeftAsItIs() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(jordan, 3, 6)])
+        splitter.add([say(jordan, 7, 8, engine: "S2"), say(jordan, 8, 9, engine: "S2"), say(jordan, 9, 12, engine: "S2")])
+        XCTAssertEqual(ids(splitter), ["S1", "S1", "S2", "S2", "S2"])
+    }
+
+    func testANewPersonStaysNew() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(jordan, 3, 6)])
+        splitter.add([say([0, 0, 1, 0], 7, 10, engine: "S2")])
+        XCTAssertEqual(ids(splitter), ["S1", "S1", "S2"])
+    }
+
+    /// Between two people heard so far: not clearly either, so left to the
+    /// engine (and Warble's later checks).
+    func testANewVoiceBetweenTwoPeopleStaysNew() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(aj, 3, 6, engine: "S2")])
+        splitter.add([say([1, 1, 0, 0], 7, 10, engine: "S3")])
+        XCTAssertEqual(ids(splitter), ["S1", "S2", "S3"])
+    }
+
     func testClickingAWrongChipSplitsOffOnlyTheirTurn() {
         var splitter = VoiceSplitter()
         splitter.add([say(jordan, 0, 3), say(jordan, 3, 6), say(jordan, 6, 9)])

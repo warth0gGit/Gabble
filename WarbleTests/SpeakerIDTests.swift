@@ -256,11 +256,14 @@ final class LearningPrintTests: XCTestCase {
     func testTheVoiceThatStayedOnePersonIsLearned() {
         var splitter = VoiceSplitter()
         let jordan: [Float] = [1, 0, 0]
-        // Someone else, just close enough to Jordan's first seconds to be lumped in with him.
-        let lumpedIn: [Float] = [0.505, 0.863, 0]
+        // Jordan on a worse line: too different for Warble to tell it's him.
+        let jordanFaint: [Float] = [0.5, 0, 0.866]
+        // Someone else, just close enough to that to be lumped in with him.
+        let lumpedIn: [Float] = [0, 0.8, 0.6]
         // S1: Jordan all call. S2: Jordan for 9 s, then mostly the other person.
         splitter.add((0..<4).map { VoiceSegment(speakerID: "S1", start: Double($0) * 6, end: Double($0) * 6 + 6, embedding: jordan) })
-        splitter.add((0..<3).map { VoiceSegment(speakerID: "S2", start: 30 + Double($0) * 3, end: 33 + Double($0) * 3, embedding: jordan) })
+        splitter.add((0..<3).map { VoiceSegment(speakerID: "S2", start: 30 + Double($0) * 3, end: 33 + Double($0) * 3,
+                                                embedding: jordanFaint) })
         splitter.add((0..<20).map { VoiceSegment(speakerID: "S2", start: 40 + Double($0) * 6, end: 46 + Double($0) * 6,
                                                  embedding: lumpedIn) })
         XCTAssertEqual(Set(splitter.segments.map(\.speakerID)), ["S1", "S2"], "never split off")

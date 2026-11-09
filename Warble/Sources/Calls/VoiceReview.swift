@@ -252,6 +252,8 @@ struct VoiceLog: Codable, Equatable {
             "candidateDistance": Double(VoiceMatcher.candidateDistance),
             "waitBeforeAskingAtMost": VoiceMatcher.waitBeforeAskingAtMost,
             "splitterSameDistance": Double(VoiceSplitter.sameDistance),
+            "sameAsEarlierDistance": Double(VoiceSplitter.sameAsEarlierDistance),
+            "sameAsEarlierMargin": Double(VoiceSplitter.sameAsEarlierMargin),
         ]
     }
 
