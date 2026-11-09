@@ -9,6 +9,7 @@ struct SpeakerCheckView: View {
     let check: SpeakerCheck
     @State private var typing: String?
     @State private var typed = ""
+    @State private var rowsHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -24,7 +25,10 @@ struct SpeakerCheckView: View {
             .padding(.bottom, 4)
             // A long call's list scrolls rather than pushing Done off the screen.
             if check.rows.count > 3 {
-                ScrollView { rows }.frame(height: 440)
+                ScrollView {
+                    rows.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
+                }
+                .frame(height: min(max(rowsHeight, 120), 440))
             } else {
                 rows
             }

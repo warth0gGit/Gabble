@@ -81,7 +81,6 @@ final class CallController: ObservableObject {
     /// A voice Warble doesn't know yet, waiting for "Who is talking?".
     struct UnknownVoice: Equatable {
         var speakerID: String
-        var sample: String
         /// A name said around when they started talking ("Thanks, Matt"), offered as a suggestion.
         var hint: String? = nil
         /// One-tap answers, best first (see `NameSuggestion.build`).
@@ -433,8 +432,9 @@ final class CallController: ObservableObject {
         for segment in voices.sorted(by: { $0.end < $1.end }) {
             running[segment.speakerID, default: 0] += segment.end - segment.start
             guard !order.contains(segment.speakerID) else { continue }
-            if (running[segment.speakerID] ?? 0) >= 2 || segment.speakerID == asking { order.append(segment.speakerID) }
+            if (running[segment.speakerID] ?? 0) >= 2 { order.append(segment.speakerID) }
         }
+        if let asking, !order.contains(asking), voices.contains(where: { $0.speakerID == asking }) { order.append(asking) }
         guard !order.isEmpty else {
             list.append(LiveSpeaker(id: "others", name: "Others", isSpeaking: othersTalking))
             return list
@@ -1051,7 +1051,9 @@ final class CallController: ObservableObject {
     private func ask(about id: String, excluding excluded: String? = nil) {
         let hint = nameHint(for: id).flatMap { $0.caseInsensitiveCompare(excluded ?? "") == .orderedSame ? nil : $0 }
         logDecision("ask", voice: id, name: hint)
-        askingWho = UnknownVoice(speakerID: id, sample: sample(for: id), hint: hint,
+        askingWords = sample(for: id)
+        askingWordsKey = "\(id)|\(transcript?.segments.count ?? 0)|\(voiceSegments.count)"
+        askingWho = UnknownVoice(speakerID: id, hint: hint,
                                  suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []))
         restartAskTimeout()
         let askedAt = askingWho?.askedAt
@@ -1300,6 +1302,40 @@ final class CallController: ObservableObject {
     private var lastMove: (voice: String, at: Date)?
     /// How long a click waits for recognition before it's dropped.
     static let pendingMoveLimit: TimeInterval = 30
+    /// By this long after a click, recognition has gone past it (it works in
+    /// ten-second chunks), even if nobody on the other side spoke since.
+    static let recognitionLag: TimeInterval = 15
+
+    /// The voice heard at `moment`: one talking then, else the one that had
+    /// just stopped (a click comes as someone finishes). Pure, unit tested.
+    nonisolated static func voice(at moment: TimeInterval, in segments: [VoiceSegment]) -> String? {
+        let window = (moment - 0.5)...(moment + 0.5)
+        let overlapping = segments.filter { $0.start < window.upperBound && $0.end > window.lowerBound }
+        if let best = overlapping.max(by: {
+            min($0.end, window.upperBound) - max($0.start, window.lowerBound)
+                < min($1.end, window.upperBound) - max($1.start, window.lowerBound)
+        }) { return best.speakerID }
+        return segments.filter { $0.end <= moment && moment - $0.end <= 3 }.max { $0.end < $1.end }?.speakerID
+    }
+
+    /// Whether `voice`'s latest turn is the one heard at `moment`: it runs on
+    /// from then with no one else talking in between. Only then does moving
+    /// its latest turn move what you clicked about. Pure, unit tested.
+    nonisolated static func latestTurnCovers(_ voice: String, at moment: TimeInterval, in segments: [VoiceSegment]) -> Bool {
+        let ordered = segments.sorted { $0.start < $1.start }
+        guard let first = ordered.firstIndex(where: { $0.speakerID == voice && $0.end >= moment - 3 }),
+              ordered[first].start <= moment + 0.5 else { return false }
+        var end = ordered[first].end
+        for next in ordered[(first + 1)...] {
+            if next.speakerID == voice {
+                guard next.start - end <= 1.5 else { return false }   // a pause: a later turn
+                end = max(end, next.end)
+            } else if next.end - next.start >= 1 {
+                return false   // someone else spoke after it
+            }
+        }
+        return true
+    }
     /// A click comes a moment after you hear who's talking.
     static let clickDelay: TimeInterval = 1
 
@@ -1333,42 +1369,43 @@ final class CallController: ObservableObject {
             logDecision("move-dropped", voice: "", name: move.personID.flatMap { namesThisCall[$0] })
             return
         }
-        guard (voiceSegments.map(\.end).max() ?? 0) >= move.at else { return }   // not heard yet
+        // Heard yet? Either speech reaches the click, or long enough has passed
+        // for recognition to have gone past it (it sends nothing for silence).
+        let heardUpTo = voiceSegments.map(\.end).max() ?? 0
+        guard heardUpTo >= move.at || Date().timeIntervalSince(move.clicked) >= Self.recognitionLag else { return }
         pendingMove = nil
         // Only voices with a chip (or being asked about): never a cough or an echo.
         let talk = SpeakerAssigner.talkTime(voiceSegments)
         let shown = voiceSegments.filter { (talk[$0.speakerID] ?? 0) >= 2 || $0.speakerID == askingWho?.speakerID }
-        guard let voice = SpeakerAssigner.speaker(for: max(0, move.at - 0.5)...(move.at + 0.5), in: shown) else {
+        guard let voice = Self.voice(at: move.at, in: shown) else {
             logDecision("move-nobody", voice: "")
             return
         }
-        guard let personID = move.personID else {
-            // + New
-            if namesThisCall[voice] == nil {
-                skippedVoices.remove(voice)
-                deferredVoices.remove(voice)
-                askTimeout?.cancel()
-                ask(about: voice)
-                refreshLiveSpeakers()
-            } else {
-                relabelVoice(voice)
-            }
-            return
-        }
-        guard let target = namesThisCall[personID] else { return }
-        if namesThisCall[voice]?.caseInsensitiveCompare(target) == .orderedSame { return }
-        var moved = voice
         let correcting = lastMove.map { $0.voice == voice && Date().timeIntervalSince($0.at) < Self.pendingMoveLimit } ?? false
+        // A named voice (that you didn't just move) has only its turn at the
+        // click moved, and only when its latest turn is that one.
+        var moved = voice
         if namesThisCall[voice] != nil && !correcting {
-            // Someone else's voice: move just their turn at that moment.
-            guard let last = voiceSegments.last(where: { $0.speakerID == voice }),
-                  last.start <= move.at + VoiceSplitter.recentSeconds,
-                  let split = splitter.splitRecent(of: voice) else {
-                logDecision("move-unsplit", voice: voice, name: target)
+            guard Self.latestTurnCovers(voice, at: move.at, in: shown), let split = splitter.splitRecent(of: voice) else {
+                logDecision("move-unsplit", voice: voice, name: move.personID.flatMap { namesThisCall[$0] })
                 return
             }
             moved = split
         }
+        guard let personID = move.personID else {
+            // + New: ask who the voice heard at the click is.
+            let excluded = moved == voice ? nil : namesThisCall[voice]
+            voicesChecked.insert(moved)
+            checkedAtTalk[moved] = .infinity
+            skippedVoices.remove(moved)
+            deferredVoices.remove(moved)
+            askTimeout?.cancel()
+            ask(about: moved, excluding: excluded)
+            refreshLiveSpeakers()
+            return
+        }
+        guard let target = namesThisCall[personID] else { return }
+        if namesThisCall[moved]?.caseInsensitiveCompare(target) == .orderedSame { return }
         voicesChecked.insert(moved)
         checkedAtTalk[moved] = .infinity   // you said who it is; no second-guessing
         if askingWho?.speakerID == voice || askingWho?.speakerID == moved {

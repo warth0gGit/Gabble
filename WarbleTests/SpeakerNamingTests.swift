@@ -128,6 +128,26 @@ final class SpeakerCheckTests: XCTestCase {
         XCTAssertTrue(capped.hasSuffix("…"))
     }
 
+    func testAClickIsAboutWhoeverWasTalkingThenOrHadJustStopped() {
+        let voices = [voice("A", 0, 5), voice("B", 6, 10), voice("A", 14, 20)]
+        XCTAssertEqual(CallController.voice(at: 3, in: voices), "A")
+        XCTAssertEqual(CallController.voice(at: 9.8, in: voices), "B")
+        XCTAssertEqual(CallController.voice(at: 12, in: voices), "B")   // B had just stopped
+        XCTAssertNil(CallController.voice(at: 30, in: voices))          // nobody near
+    }
+
+    func testOnlyTheTurnAtTheClickIsMoved() {
+        // A talks at the click and carries on: its latest turn is the clicked one.
+        let carriesOn = [voice("A", 0, 5), voice("A", 5.5, 9)]
+        XCTAssertTrue(CallController.latestTurnCovers("A", at: 3, in: carriesOn))
+        // A, then B, then A again: A's latest turn isn't the clicked one.
+        let later = [voice("A", 0, 5), voice("B", 5, 8), voice("A", 8, 12)]
+        XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: later))
+        // A short "yeah" from B doesn't end A's turn; a long pause does.
+        XCTAssertTrue(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("B", 5, 5.5), voice("A", 5.6, 9)]))
+        XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("A", 9, 12)]))
+    }
+
     func testSameNameAndSameVoiceIsNotShared() {
         let voices = [voice("B", 0, 10), voice("C", 10, 20), voice("X", 20, 30)]
         let rows = SpeakerCheck.rows(voices: voices, names: ["B": "Jordan", "C": "Jordan"], namedLive: [],
