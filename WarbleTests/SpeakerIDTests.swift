@@ -408,6 +408,26 @@ final class ChunkAndGapTests: XCTestCase {
         XCTAssertEqual(EngineClock.callTime(5, gaps: []), 5)
     }
 
+    func testAnUnnamedVoiceIsCheckedAgainWhenSomeoneIsNamed() {
+        let rechecks: [TimeInterval] = [8, 12, 20, 30, 45, 60, 90]
+        func again(_ talk: TimeInterval, _ last: TimeInterval?, named: Int = 1, atLast: Int? = 1) -> Bool {
+            VoiceMatcher.shouldCheckAgain(talk: talk, lastChecked: last, rechecks: rechecks,
+                                          namedOnCall: named, namedAtLastCheck: atLast)
+        }
+        XCTAssertTrue(again(5, nil), "never checked")
+        XCTAssertTrue(again(8, 5), "the next recheck")
+        XCTAssertFalse(again(10, 8), "between rechecks, nobody new")
+        XCTAssertFalse(again(120, 90), "rechecks have run out")
+        XCTAssertTrue(again(150, 90), "a minute more talk after the last one")
+        XCTAssertFalse(again(200, 150))
+        XCTAssertTrue(again(210, 150))
+        // Jonny's 9 November call: Ann's unnamed voice (437 s) after Ann was named elsewhere.
+        XCTAssertTrue(again(300, 280, named: 2, atLast: 1), "someone new was named since")
+        XCTAssertFalse(again(300, 280, named: 2, atLast: 2))
+        XCTAssertFalse(again(300, .infinity, named: 3, atLast: 1), "you said who it isn't: never guess")
+        XCTAssertTrue(again(300, 280, named: 1, atLast: nil), "older check with no count")
+    }
+
     func testSpeechAcrossAGapIsCutInTwo() {
         let gaps = [EngineClock.Gap(at: 20, extra: 4), EngineClock.Gap(at: 50, extra: 5)]
         func flat(_ p: [(start: TimeInterval, end: TimeInterval)]) -> [TimeInterval] { p.flatMap { [$0.start, $0.end] } }

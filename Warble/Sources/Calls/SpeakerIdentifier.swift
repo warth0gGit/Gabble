@@ -422,6 +422,32 @@ enum VoiceMatcher {
         return next <= limit
     }
 
+    /// After the last of `rechecks`, someone still unnamed is checked again
+    /// after every this-many more seconds of talk.
+    static let recheckEvery: TimeInterval = 60
+
+    /// Whether an unnamed voice is due another check. Besides the talk
+    /// totals in `rechecks` (and every `recheckEvery` seconds after them),
+    /// it is checked again whenever someone new has been named on the call
+    /// since its last check. On Jonny's call of 9 November, Ann talked for
+    /// over seven minutes as an unnamed voice right beside a voice named Ann
+    /// (0.03 apart), because her rechecks had all run out before Ann was
+    /// named. Pure, unit tested.
+    /// - Parameters:
+    ///   - talk: seconds this voice has talked so far.
+    ///   - lastChecked: its talk total when it was last checked (nil: never;
+    ///     infinity: you said who it isn't, so Warble mustn't guess).
+    ///   - namedOnCall: how many names are on the call now (sure ones only).
+    ///   - namedAtLastCheck: how many there were at its last check.
+    static func shouldCheckAgain(talk: TimeInterval, lastChecked: TimeInterval?, rechecks: [TimeInterval],
+                                 namedOnCall: Int, namedAtLastCheck: Int?) -> Bool {
+        guard let last = lastChecked else { return true }
+        guard last.isFinite else { return false }
+        if rechecks.contains(where: { $0 > last && talk >= $0 }) { return true }
+        if let final = rechecks.max(), talk >= final, talk >= max(last, final) + recheckEvery { return true }
+        return namedOnCall > (namedAtLastCheck ?? 0)
+    }
+
     /// Everyone on file, nearest first.
     private static func ranked(_ embedding: [Float], _ known: [Voiceprint]) -> [(name: String, distance: Float)] {
         known.map { (name: $0.name, distance: distance(embedding, to: $0)) }.sorted { $0.distance < $1.distance }
