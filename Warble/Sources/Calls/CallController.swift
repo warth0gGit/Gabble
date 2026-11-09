@@ -1318,11 +1318,12 @@ final class CallController: ObservableObject {
         return segments.filter { $0.end <= moment && moment - $0.end <= 3 }.max { $0.end < $1.end }?.speakerID
     }
 
-    /// Whether `voice`'s latest turn, as `VoiceSplitter.splitRecent` takes
-    /// it, includes what was heard at `moment`: it runs on from then with
-    /// nobody else in between, no pause over 1.5 s, and starts within the
-    /// splitter's 12 seconds of its end. Only then does moving its latest turn
-    /// move what you clicked about. Pure, unit tested.
+    /// Whether `voice`'s latest turn is the one heard at `moment`: it runs on
+    /// from then with nobody else in between and no pause over 1.5 s (the
+    /// turn as `VoiceSplitter.splitRecent` takes it). Only then is moving its
+    /// latest turn moving the person you clicked about. In a long turn the
+    /// splitter moves only its last 12 seconds; that's still them, and the
+    /// earlier part can be fixed after the call. Pure, unit tested.
     nonisolated static func latestTurnCovers(_ voice: String, at moment: TimeInterval, in segments: [VoiceSegment]) -> Bool {
         let ordered = segments.sorted { $0.start < $1.start }
         guard let first = ordered.firstIndex(where: { $0.speakerID == voice && $0.end >= moment - 3 }),
@@ -1332,7 +1333,7 @@ final class CallController: ObservableObject {
             guard next.speakerID == voice, next.start - end <= 1.5 else { return false }   // someone else, or a pause
             end = max(end, next.end)
         }
-        return end - ordered[first].start <= VoiceSplitter.recentSeconds
+        return true
     }
     /// A click comes a moment after you hear who's talking.
     static let clickDelay: TimeInterval = 1
