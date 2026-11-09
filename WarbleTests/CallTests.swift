@@ -239,11 +239,10 @@ final class ChipNameTests: XCTestCase {
         XCTAssertEqual(names["Jala"], "Jala")
     }
 
-    func testABigCallShowsTheMostRecentFourAndACount() {
+    func testABigCallShowsEveryoneSoNoOneIsHidden() {
         let voices = (1...7).map { VoiceSegment(speakerID: "S\($0)", start: Double($0 * 10), end: Double($0 * 10 + 5)) }
         let list = CallController.liveSpeakers(meTalking: false, meLevel: 0, meThreshold: 0.02, othersTalking: true,
                                                voices: voices, asking: nil, name: { "Person \($0)" })
-        XCTAssertEqual(list.map(\.id), ["you", "S4", "S5", "S6", "S7", "more"])
-        XCTAssertEqual(list.last?.name, "+3")
+        XCTAssertEqual(list.map(\.id), ["you", "S1", "S2", "S3", "S4", "S5", "S6", "S7"])
     }
 }

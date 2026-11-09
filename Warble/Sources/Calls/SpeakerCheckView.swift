@@ -65,8 +65,9 @@ struct SpeakerCheckView: View {
                             .font(.caption)
                             .italic()
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(4)
                             .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 4)
@@ -81,7 +82,7 @@ struct SpeakerCheckView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .help("Play 4 seconds of this voice")
+                    .help("Play \(Int(SpeakerCheck.clipLength)) seconds of this voice")
                 }
             }
             fixes(row)
