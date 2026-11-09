@@ -1078,8 +1078,8 @@ final class CallController: ObservableObject {
         logDecision("ask", voice: id, name: hint)
         askingWords = sample(for: id)
         askingWordsKey = "\(id)|\(transcript?.segments.count ?? 0)|\(voiceSegments.count)"
-        askingWho = UnknownVoice(speakerID: id, hint: hint, byYou: byYou,
-                                 suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []))
+        askingWho = UnknownVoice(speakerID: id, hint: hint,
+                                 suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []), byYou: byYou)
         restartAskTimeout()
         let askedAt = askingWho?.askedAt
         guard let speakers = recorder?.speakers else { return }
@@ -1144,7 +1144,7 @@ final class CallController: ObservableObject {
         guard let behind = Self.behindLatest(id, in: voiceSegments), let ago = secondsSinceHeard(id) else { return true }
         // The other side is talking, but not (as far as recognition has got) them.
         let othersTalking = recorder?.othersMeter.isSpeaking() ?? false
-        return behind > 8 || ago > 35 || (othersTalking && ago > 14)
+        return behind > 8 || ago > 35 || (othersTalking && ago > 16)
     }
 
     /// Puts away a Who's this? card once its voice has gone quiet (unless
