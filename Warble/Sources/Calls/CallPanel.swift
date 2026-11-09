@@ -344,7 +344,7 @@ struct CallPanelView: View {
             .textFieldStyle(.roundedBorder)
             .onSubmit(saveName)
             .onExitCommand(perform: skipVoice)
-            .onChange(of: whoName) { _, _ in calls.restartAskTimeout() }
+            .onChange(of: whoName) { _, _ in calls.answerTyping() }
         Button("Later", action: skipVoice)
             .buttonStyle(.plain)
             .font(.caption)

@@ -136,6 +136,13 @@ final class SpeakerCheckTests: XCTestCase {
         XCTAssertNil(CallController.voice(at: 30, in: voices))          // nobody near
     }
 
+    func testHowLongSinceAVoiceSpokeIsMeasuredFromTheNewestSpeech() {
+        let voices = [voice("A", 0, 5), voice("B", 6, 10), voice("A", 11, 14), voice("C", 15, 30)]
+        XCTAssertEqual(CallController.behindLatest("C", in: voices), 0)
+        XCTAssertEqual(CallController.behindLatest("A", in: voices), 16)   // C has talked since: don't ask about A now
+        XCTAssertNil(CallController.behindLatest("Z", in: voices))
+    }
+
     func testOnlyTheTurnAtTheClickIsMoved() {
         // A talks at the click and carries on: its latest turn is the clicked one.
         let carriesOn = [voice("A", 0, 5), voice("A", 5.5, 9)]
