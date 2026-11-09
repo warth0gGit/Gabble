@@ -9,6 +9,9 @@ struct VoiceSegment: Equatable {
     var end: TimeInterval
     /// The voice engine's fingerprint of this stretch, if it gave one.
     var embedding: [Float] = []
+    /// The voice the engine itself gave this stretch, once Warble has checked
+    /// it (`speakerID` is then Warble's view). Kept for the voice log.
+    var engineID: String? = nil
 }
 
 /// A person Warble knows by voice.

@@ -8,6 +8,10 @@ import Foundation
 /// unlike the engine's, doesn't drift towards whoever else gets lumped in).
 /// Speech that clearly sounds like someone else for a few seconds in a row
 /// becomes a voice of its own, which Warble then matches or asks about.
+/// The other way round, the engine sometimes decides someone already heard
+/// is new (one ten-second print came out a little different), and then they
+/// show up as a stranger; so a new voice from the engine that clearly sounds
+/// like someone heard earlier is taken to be them.
 /// Pure, unit tested.
 struct VoiceSplitter {
     /// Only a stretch at least this long is judged; shorter ones are too noisy.
@@ -20,6 +24,26 @@ struct VoiceSplitter {
     static let splitSeconds: TimeInterval = 4
     /// "The person talking now": their speech in the last this-many seconds.
     static let recentSeconds: TimeInterval = 12
+    /// A new voice from the engine whose first clear stretch is within this
+    /// of someone already heard (their fixed fingerprint), and clearly nearer
+    /// them than anyone else (by `sameAsEarlierMargin`), is that person.
+    /// The engine judges a new voice from one ten-second print against a
+    /// print of its own that drifts; Warble's fingerprints are steadier. In
+    /// the replay of 12 recorded calls this cut the times someone already
+    /// heard came up as a new voice by a fifth to three quarters (only
+    /// about one a call at our own distances, more where voices vary more),
+    /// with speech under a wrong name within a point either way; about one
+    /// in ten of these joins is to the wrong person, and the splitter or a
+    /// chip click has to undo it.
+    static let sameAsEarlierDistance: Float = 0.45
+    static let sameAsEarlierMargin: Float = 0.1
+    /// A voice with this much talk is on show in the call panel (the same
+    /// 2 s the panel uses), so it is never quietly taken to be someone else.
+    static let onShowSeconds: TimeInterval = 2
+    /// The names given so far (voice to name), if the controller passes
+    /// them: then "clearly nearer" is judged person by person, so someone
+    /// already heard as two voices still counts as one person.
+    var names: [String: String] = [:]
 
     /// Every stretch heard, with the voice Warble thinks it is.
     private(set) var segments: [VoiceSegment] = []
@@ -49,9 +73,15 @@ struct VoiceSplitter {
     private var family: [String: [String]] = [:]
     /// Doubtful stretches in a row, per engine voice (indexes into `segments`).
     private var doubt: [String: [Int]] = [:]
-    /// The voice each engine voice was last clearly heard as.
+    /// The voice each engine voice was last clearly heard as. Kept for the
+    /// engine's own ID too when it was taken to be someone heard earlier, so
+    /// its short stretches follow what it was last, not whoever else is in
+    /// that family.
     private var lastVoice: [String: String] = [:]
     private var splits = 0
+    /// Each engine voice, once its first clear stretch is in: itself, or the
+    /// engine voice of the person heard earlier that it turned out to be.
+    private var sameAs: [String: String] = [:]
 
     /// Adds what the engine heard, checking each stretch.
     mutating func add(_ new: [VoiceSegment]) {
@@ -59,10 +89,12 @@ struct VoiceSplitter {
     }
 
     private mutating func add(_ segment: VoiceSegment) {
-        let engine = segment.speakerID
+        let engine = engineVoice(for: segment)
+        let raw = segment.speakerID
         if family[engine] == nil { family[engine] = [engine] }
         let seconds = segment.end - segment.start
-        let current = lastVoice[engine] ?? engine
+        let current = lastVoice[raw] ?? lastVoice[engine] ?? engine
+        func heardAs(_ voice: String) { lastVoice[engine] = voice; lastVoice[raw] = voice }
 
         guard !segment.embedding.isEmpty, seconds >= Self.judgeSeconds else {
             append(segment, as: current, engine: engine)
@@ -76,13 +108,13 @@ struct VoiceSplitter {
             // The first clear speech from this voice: it starts the fingerprint.
             anchors[engine] = Anchor(segment.embedding, seconds: seconds)
             append(segment, as: engine, engine: engine)
-            lastVoice[engine] = engine
+            heardAs(engine)
             return
         }
         if best.distance <= Self.sameDistance {
             append(segment, as: best.id, engine: engine)
             if anchors[best.id]?.isFixed == false { anchors[best.id]?.add(segment.embedding, seconds: seconds) }
-            lastVoice[engine] = best.id
+            heardAs(best.id)
             doubt[engine] = []
             return
         }
@@ -114,12 +146,57 @@ struct VoiceSplitter {
             family[engine, default: [engine]].append(voice)
         }
         for index in run { segments[index].speakerID = voice }
-        lastVoice[engine] = voice
+        heardAs(voice)
         doubt[engine] = []
+    }
+
+    /// The engine voice this stretch is checked under: the engine's own, or,
+    /// for a voice the engine has just started, the person heard earlier it
+    /// clearly sounds like. Decided once, on the voice's first clear stretch.
+    private mutating func engineVoice(for segment: VoiceSegment) -> String {
+        let id = segment.speakerID
+        if let decided = sameAs[id] { return decided }
+        // Until its first clear stretch it shows as a voice of its own.
+        guard !segment.embedding.isEmpty, segment.end - segment.start >= Self.judgeSeconds else { return id }
+        // Already on show by then (2 s of short bits): left as it is, so a
+        // voice on screen, or being asked about, never just disappears.
+        let shown = segments.indices.filter { engineIDs[$0] == id }
+            .reduce(0) { $0 + segments[$1].end - segments[$1].start }
+        guard shown < Self.onShowSeconds, let earlier = voiceHeardEarlier(soundingLike: segment.embedding),
+              let owner = family.first(where: { $0.value.contains(earlier) })?.key, owner != id else {
+            sameAs[id] = id
+            return id
+        }
+        sameAs[id] = owner
+        // Its first few short stretches were that person too.
+        for index in segments.indices where engineIDs[index] == id {
+            segments[index].speakerID = earlier
+            engineIDs[index] = owner
+        }
+        family[id] = nil
+        lastVoice[id] = earlier
+        doubt[id] = nil
+        return owner
+    }
+
+    /// The voice heard so far that `embedding` clearly sounds like, if any.
+    private func voiceHeardEarlier(soundingLike embedding: [Float]) -> String? {
+        // Nearest voice per person (a named person's voices count as one).
+        var nearest: [String: (id: String, distance: Float)] = [:]
+        for (id, anchor) in anchors where anchor.seconds >= 2 {
+            let person = names[id].map { "name:" + $0.lowercased() } ?? id
+            let distance = Self.distance(embedding, anchor.sum)
+            if distance < nearest[person]?.distance ?? .infinity { nearest[person] = (id, distance) }
+        }
+        let ranked = nearest.values.sorted { $0.distance < $1.distance }
+        guard let best = ranked.first, best.distance <= Self.sameAsEarlierDistance else { return nil }
+        if ranked.count > 1, ranked[1].distance - best.distance < Self.sameAsEarlierMargin { return nil }
+        return best.id
     }
 
     private mutating func append(_ segment: VoiceSegment, as voice: String, engine: String) {
         var s = segment
+        s.engineID = segment.engineID ?? segment.speakerID   // what the engine called it, for the voice log
         s.speakerID = voice
         segments.append(s)
         engineIDs.append(engine)
@@ -166,6 +243,7 @@ struct VoiceSplitter {
         family[engine, default: [engine]].append(split)
         for index in recent { segments[index].speakerID = split }
         lastVoice[engine] = split
+        if let raw = segments[last].engineID { lastVoice[raw] = split }
         doubt[engine] = []
         return split
     }
@@ -205,15 +283,38 @@ struct VoiceSplitter {
             .sorted { (talk[$0] ?? 0) > (talk[$1] ?? 0) }
         for voice in theirs {
             guard let print = callPrint(for: voice) else { continue }
-            if let first = fingerprint(for: voice), Self.distance(print, first) > Self.steadyDistance { continue }
+            if let first = fingerprint(for: voice) {
+                if Self.distance(print, first) > Self.steadyDistance { continue }
+                if shareUnlike(first, in: voice) > Self.mixedShare { continue }
+            }
             return print
         }
         return nil
     }
 
+    /// The share of a voice's clear speech that is further than
+    /// `steadyDistance` from `first`.
+    private func shareUnlike(_ first: [Float], in voice: String) -> Double {
+        var far: TimeInterval = 0, total: TimeInterval = 0
+        for s in segments where s.speakerID == voice && !s.embedding.isEmpty {
+            let length = s.end - s.start
+            guard length >= Self.judgeSeconds else { continue }
+            total += length
+            if Self.distance(s.embedding, first) > Self.steadyDistance { far += length }
+        }
+        return total > 0 ? far / total : 0
+    }
+
     /// A voice whose whole-call print is further than this from its first
     /// seconds has had someone else lumped in, and isn't learned from.
     static let steadyDistance: Float = 0.4
+    /// Nor is one with more than this share of its clear speech further than
+    /// `steadyDistance` from its first seconds: the whole-call print can
+    /// stay near enough even when most of the speech is someone else's.
+    /// In the replay no voice that stayed one person went over it (worst
+    /// 24%); with wider distances about one in ten would, and is then only
+    /// not learned from this call.
+    static let mixedShare: Double = 0.25
 
     // MARK: - Maths
 

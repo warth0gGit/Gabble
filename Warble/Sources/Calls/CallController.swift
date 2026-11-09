@@ -432,7 +432,7 @@ final class CallController: ObservableObject {
         for segment in voices.sorted(by: { $0.end < $1.end }) {
             running[segment.speakerID, default: 0] += segment.end - segment.start
             guard !order.contains(segment.speakerID) else { continue }
-            if (running[segment.speakerID] ?? 0) >= 2 { order.append(segment.speakerID) }
+            if (running[segment.speakerID] ?? 0) >= VoiceSplitter.onShowSeconds { order.append(segment.speakerID) }
         }
         if let asking, !order.contains(asking), voices.contains(where: { $0.speakerID == asking }) { order.append(asking) }
         guard !order.isEmpty else {
@@ -954,6 +954,9 @@ final class CallController: ObservableObject {
     // MARK: - Voices
 
     private func heard(_ segments: [VoiceSegment]) {
+        // Who each voice is (sure names only, never a guess), so a new engine
+        // voice that sounds like a named person joins them more readily.
+        splitter.names = namesThisCall.filter { isKnown($0.key) }
         splitter.add(segments)
         resolvePendingMove()
         checkNewVoicesAgainstKnownPeople()
@@ -1375,7 +1378,9 @@ final class CallController: ObservableObject {
         pendingMove = nil
         // Only voices with a chip (or being asked about): never a cough or an echo.
         let talk = SpeakerAssigner.talkTime(voiceSegments)
-        let shown = voiceSegments.filter { (talk[$0.speakerID] ?? 0) >= 2 || $0.speakerID == askingWho?.speakerID }
+        let shown = voiceSegments.filter {
+            (talk[$0.speakerID] ?? 0) >= VoiceSplitter.onShowSeconds || $0.speakerID == askingWho?.speakerID
+        }
         guard let voice = Self.voice(at: move.at, in: shown) else {
             logDecision("move-nobody", voice: "")
             return
