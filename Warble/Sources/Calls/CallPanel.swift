@@ -119,8 +119,6 @@ struct CallPanelView: View {
     @EnvironmentObject private var calls: CallController
     let sizeRelay: SizeRelay
     @State private var whoName = ""
-    /// The chip whose choices are open, if any.
-    @State private var openChip: String?
     @State private var newFolder = ""
     @State private var callName = ""
 
@@ -137,8 +135,6 @@ struct CallPanelView: View {
         .environment(\.colorScheme, .dark)
         // Text half-typed for one voice must never name the next one.
         .onChange(of: calls.askingWho?.speakerID) { _, _ in whoName = "" }
-        // Voice ids start again on each call.
-        .onChange(of: calls.recordingStarted) { _, _ in openChip = nil }
         .onGeometryChange(for: CGSize.self) { proxy in
             proxy.size
         } action: { size in
@@ -255,91 +251,42 @@ struct CallPanelView: View {
             .buttonStyle(.plain)
             .help("Stop transcribing and save the transcript")
         }
+        // Everyone on the call. Click whoever is talking; the click waits a few
+        // seconds for voice recognition to catch up (its chip is outlined till then).
         FlowLayout(spacing: 6) {
             ForEach(calls.liveSpeakers) { speaker in
-                if speaker.isYou || ["others", "more"].contains(speaker.id) || speaker.isNew {
+                if speaker.isYou || speaker.id == "others" || speaker.isNew || speaker.name.hasPrefix("Speaker ") {
                     SpeakerChip(speaker: speaker)
                 } else {
-                    // Clicking a name only ever opens its choices; nothing
-                    // changes until you pick one.
                     Button {
-                        openChip = openChip == speaker.id ? nil : speaker.id
-                    } label: { SpeakerChip(speaker: speaker, isOpen: openChip == speaker.id) }
+                        calls.moveCurrentSpeech(to: speaker.id)
+                    } label: {
+                        SpeakerChip(speaker: speaker, isPending: calls.pendingMove.map { $0.personID == speaker.id } ?? false)
+                    }
                         .buttonStyle(.plain)
-                        .help("Wrong person? Click for choices")
+                        .help("Click while \(speaker.name) is talking")
                 }
             }
-        }
-        if let id = openChip, let speaker = calls.liveSpeakers.first(where: { $0.id == id }) {
-            chipChoices(for: speaker)
-        }
-        if let naming = calls.lastNaming {
-            undoRow(naming)
+            if calls.liveSpeakers.contains(where: { !$0.isYou && $0.id != "others" }) {
+                Button {
+                    calls.newPersonTalking()
+                } label: {
+                    Text("+ New")
+                        .font(.caption)
+                        .foregroundStyle(WarbleColor.idle)
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 9)
+                        .overlay(Capsule().strokeBorder(newPending ? WarbleColor.glow : WarbleColor.line,
+                                                        style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Someone not shown here is talking")
+            }
         }
         if let asking = calls.askingWho {
             whosThis(asking)
         }
-    }
-
-    /// The choices under a clicked name.
-    @ViewBuilder
-    private func chipChoices(for speaker: CallController.LiveSpeaker) -> some View {
-        let name = speaker.fullName ?? speaker.name
-        VStack(alignment: .leading, spacing: 8) {
-            if speaker.shared > 1 {
-                Text("Two different-sounding voices are both called **\(name)**.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    choiceButton(speaker.isSpeaking ? "Name the one talking now" : "Name the last one who spoke",
-                                 prominent: true) {
-                        calls.askAboutSharedName(speaker.id)
-                        openChip = nil
-                    }
-                    choiceButton("Check after the call") { openChip = nil }
-                }
-                explain("Until you check after the call, Warble keeps the two voices apart and won't learn either one as \(name).")
-            } else {
-                Group {
-                    if speaker.isSpeaking {
-                        Text("Talking now as **\(name)**.") + Text(speaker.isTentative ? " Warble isn't sure it's them." : "")
-                    } else {
-                        TimelineView(.periodic(from: .now, by: 1)) { _ in
-                            Text("**\(name)** \(lastSpoke(speaker.id))")
-                        }
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    if speaker.isTentative {
-                        choiceButton("Yes, it's \(firstName(name))", prominent: true) {
-                            calls.confirmVoice(speaker.id)
-                            openChip = nil
-                        }
-                    }
-                    choiceButton(speaker.isSpeaking ? "No, someone else" : "That wasn't \(firstName(name))") {
-                        calls.relabelVoice(speaker.id)
-                        openChip = nil
-                    }
-                    if let naming = calls.lastNaming, naming.name.caseInsensitiveCompare(name) == .orderedSame {
-                        choiceButton("Undo") {
-                            calls.undoLastNaming()
-                            openChip = nil
-                        }
-                    }
-                }
-                explain(speaker.isTentative
-                        ? "\"No\" means Warble asks who it is instead of guessing."
-                        : "\"No\" splits off what was just said and asks who it is. \(firstName(name))'s earlier lines stay as they are; you can check them after the call.")
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(WarbleColor.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(WarbleColor.line, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -363,14 +310,14 @@ struct CallPanelView: View {
                 }
             }
         }
-        if !asking.sample.isEmpty {
-            Text("\u{201C}\(asking.sample)\u{201D}")
-                .font(.caption)
-                .italic()
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .truncationMode(.head)
-        }
+        // Updates as they talk, so it's always what they're saying now. Its
+        // space is kept from the start so the buttons below don't move.
+        Text(calls.askingWords.isEmpty ? " " : "\u{201C}\(calls.askingWords)\u{201D}")
+            .font(.caption)
+            .italic()
+            .foregroundStyle(.secondary)
+            .lineLimit(4, reservesSpace: true)
+            .truncationMode(.head)
         if !asking.suggestions.isEmpty {
             FlowLayout(spacing: 6) {
                 ForEach(Array(asking.suggestions.enumerated()), id: \.element.id) { index, suggestion in
@@ -379,10 +326,7 @@ struct CallPanelView: View {
                         calls.choose(suggestion)
                         returnKeyboard()
                     } label: {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(suggestion.title).font(.caption.weight(.medium)).foregroundStyle(.primary)
-                            Text(suggestion.reason).font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
+                        Text(suggestion.name).font(.caption.weight(.medium)).foregroundStyle(.primary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 8).fill(WarbleColor.surface))
@@ -392,60 +336,24 @@ struct CallPanelView: View {
                         .contentShape(RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
+                    .help(suggestion.reason)
                 }
             }
         }
-        TextField("Or type a name, then Return", text: $whoName)
+        TextField("Type a name, then Return", text: $whoName)
             .textFieldStyle(.roundedBorder)
             .onSubmit(saveName)
             .onExitCommand(perform: skipVoice)
             .onChange(of: whoName) { _, _ in calls.restartAskTimeout() }
-        HStack {
-            Button("Ask me after the call", action: skipVoice)
-            Spacer()
-            Button("Don't ask during this call") {
-                whoName = ""
-                calls.pauseAsking()
-            }
-        }
-        .buttonStyle(.plain)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-
-    /// The last name you gave, with Undo, until you name someone else or the call ends.
-    private func undoRow(_ naming: CallController.Naming) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark").font(.caption2.weight(.bold)).foregroundStyle(WarbleColor.green)
-            Text("Named \(naming.name). Warble will remember this voice.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 4)
-            choiceButton("Undo") { calls.undoLastNaming() }
-        }
-    }
-
-    private func choiceButton(_ title: String, prominent: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.caption.weight(prominent ? .semibold : .medium))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .foregroundStyle(prominent ? Color.black : Color.primary)
-                .background(RoundedRectangle(cornerRadius: 7).fill(prominent ? WarbleColor.green : WarbleColor.surface))
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(prominent ? WarbleColor.green : WarbleColor.line, lineWidth: 1))
-                .contentShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func explain(_ text: String) -> some View {
-        Text(text)
-            .font(.caption2)
+        Button("Later", action: skipVoice)
+            .buttonStyle(.plain)
+            .font(.caption)
             .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+            .help("Name them after the call")
+    }
+
+    private var newPending: Bool {
+        calls.pendingMove.map { $0.personID == nil } ?? false
     }
 
     /// "last spoke 0:40 ago", or "hasn't spoken for a while".
@@ -453,10 +361,6 @@ struct CallPanelView: View {
         guard let seconds = calls.secondsSinceHeard(id) else { return "last spoke a while ago" }
         if seconds < 5 { return "spoke just now" }
         return "last spoke \(ElapsedTime.format(seconds)) ago"
-    }
-
-    private func firstName(_ name: String) -> String {
-        name.split(separator: " ").first.map(String.init) ?? name
     }
 
     /// After you answer, the keyboard goes back to the call app.
@@ -483,7 +387,7 @@ struct CallPanelView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(CallPanelColor.amber)
                 } else if let talking = calls.liveSpeakers.first(where: \.isSpeaking) {
-                    Text(talking.name + (talking.isTentative ? "?" : ""))
+                    Text(talking.name)
                         .font(.caption)
                         .foregroundStyle(WarbleColor.glow)
                         .lineLimit(1)
@@ -683,19 +587,17 @@ struct CallPanelView: View {
 
 // MARK: - Pieces
 
-/// A person's chip. It lights up green while they're talking. A voice Warble
-/// is asking about, or two different voices sharing a name ("Jordan ×2"),
-/// is amber and dashed. A guess has an amber question mark ("Jordan?").
+/// A person's chip. It lights up green while they're talking. The voice
+/// Warble is asking about is amber and dashed. A chip you just clicked is
+/// outlined until Warble has caught up with who was talking.
 struct SpeakerChip: View {
     var speaker: CallController.LiveSpeaker
-    var isOpen = false
+    var isPending = false
 
     var body: some View {
         HStack(spacing: 5) {
             SpeakingBars(active: speaker.isSpeaking)
-            (Text(speaker.name)
-                + Text(speaker.shared > 1 ? " ×\(speaker.shared)" : "")
-                + Text(speaker.isTentative && speaker.shared == 1 ? "?" : "").fontWeight(.bold).foregroundColor(CallPanelColor.amber))
+            Text(speaker.name)
                 .font(.caption)
                 .lineLimit(1)
         }
@@ -705,11 +607,11 @@ struct SpeakerChip: View {
         .foregroundStyle(textColor)
         .background(Capsule().fill(fill))
         .overlay(Capsule().strokeBorder(border, style: StrokeStyle(lineWidth: 1, dash: isWarning ? [3, 2] : [])))
-        .overlay(Capsule().strokeBorder(WarbleColor.glow.opacity(isOpen ? 0.8 : 0), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(WarbleColor.glow, lineWidth: 1.5).opacity(isPending ? 1 : 0))
         .animation(.easeOut(duration: 0.2), value: speaker.isSpeaking)
     }
 
-    private var isWarning: Bool { speaker.isNew || speaker.shared > 1 }
+    private var isWarning: Bool { speaker.isNew }
     private var accent: Color { isWarning ? CallPanelColor.amber : WarbleColor.glow }
     private var textColor: Color { speaker.isSpeaking || isWarning ? accent : WarbleColor.idle }
     private var fill: Color {

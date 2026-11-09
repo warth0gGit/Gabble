@@ -9,6 +9,7 @@ struct SpeakerCheckView: View {
     let check: SpeakerCheck
     @State private var typing: String?
     @State private var typed = ""
+    @State private var rowsHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,15 +23,14 @@ struct SpeakerCheckView: View {
                 }
             }
             .padding(.bottom, 4)
-            ForEach(Array(check.rows.enumerated()), id: \.element.id) { index, row in
-                if row.status == .shared, row.part == 1 {
-                    Text("Two voices called \(row.name ?? "")")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(CallPanelColor.amber)
-                        .padding(.top, 8)
+            // A long call's list scrolls rather than pushing Done off the screen.
+            if check.rows.count > 3 {
+                ScrollView {
+                    rows.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
                 }
-                rowView(row)
-                if index < check.rows.count - 1 { Divider() }
+                .frame(height: min(max(rowsHeight, 120), 440))
+            } else {
+                rows
             }
             HStack {
                 Button("Later") { calls.postponeCheck() }
@@ -47,6 +47,21 @@ struct SpeakerCheckView: View {
         }
     }
 
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(check.rows.enumerated()), id: \.element.id) { index, row in
+                if row.status == .shared, row.part == 1 {
+                    Text("Two voices called \(row.name ?? "")")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(CallPanelColor.amber)
+                        .padding(.top, 8)
+                }
+                rowView(row)
+                if index < check.rows.count - 1 { Divider() }
+            }
+        }
+    }
+
     @ViewBuilder
     private func rowView(_ row: SpeakerCheck.Row) -> some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -59,14 +74,6 @@ struct SpeakerCheckView: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(row.needsCheck ? CallPanelColor.amber : .secondary)
                             .lineLimit(1)
-                    }
-                    if !row.quote.isEmpty {
-                        Text("\u{201C}\(row.quote)\u{201D}")
-                            .font(.caption)
-                            .italic()
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
                     }
                 }
                 Spacer(minLength: 4)
@@ -81,8 +88,19 @@ struct SpeakerCheckView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .help("Play 4 seconds of this voice")
+                    .help("Play this voice")
                 }
+            }
+            // What they said, at full width so there's enough to know them by.
+            if !row.quote.isEmpty {
+                Text("\u{201C}\(row.quote)\u{201D}")
+                    .font(.caption)
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(8)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 40)
             }
             fixes(row)
         }

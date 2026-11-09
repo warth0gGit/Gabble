@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 /// "Check who spoke": right after a call, each voice on the other side with
-/// its name (or none), a line they said, and a 4-second clip, so a wrong or
+/// its name (or none), a few things they said, and a 15-second clip, so a wrong or
 /// missing name can be fixed before the summary is written. Pure data; the
 /// building is unit tested.
 struct SpeakerCheck: Equatable {
@@ -70,8 +70,8 @@ struct SpeakerCheck: Equatable {
 
     /// Voices quieter than this aren't listed (usually noise or a cough).
     static let minimumTalk: TimeInterval = 3
-    /// How long a clip plays.
-    static let clipLength: TimeInterval = 4
+    /// The longest a clip plays: long enough to know someone by.
+    static let clipLength: TimeInterval = 15
 
     /// The rows, in the order people first spoke. `names` may hold guesses
     /// marked with a trailing "?". Two voices with one name count as
@@ -104,11 +104,26 @@ struct SpeakerCheck: Equatable {
             } else {
                 status = .recognised
             }
-            let longest = voices.filter { $0.speakerID == id }.max { ($0.end - $0.start) < ($1.end - $1.start) }
-            let clip = longest.map { $0.start...min($0.end, $0.start + clipLength) }
             return Row(id: id, name: name, originalName: name, status: status, part: part, talk: talk[id] ?? 0,
-                       quote: quote(id), clip: clip)
+                       quote: quote(id), clip: clip(for: id, in: voices))
         }
+    }
+
+    /// Where to play a voice from: its longest stretch, carried on through
+    /// what it said straight after (past someone else's quick "yeah", until
+    /// someone else really talks or there's a pause), up to `clipLength`.
+    static func clip(for id: String, in voices: [VoiceSegment]) -> ClosedRange<TimeInterval>? {
+        let ordered = voices.sorted { $0.start < $1.start }
+        guard let first = ordered.indices.filter({ ordered[$0].speakerID == id })
+            .max(by: { ordered[$0].end - ordered[$0].start < ordered[$1].end - ordered[$1].start }) else { return nil }
+        let start = ordered[first].start
+        var end = min(ordered[first].end, start + clipLength)
+        for next in ordered[(first + 1)...] where end < start + clipLength {
+            if next.speakerID != id, next.end - next.start < 1.5 { continue }   // a quick "yeah"
+            guard next.speakerID == id, next.start - end <= 3 else { break }
+            end = min(max(end, next.end), start + clipLength)
+        }
+        return start...end
     }
 
     /// Names (lowercased) that two clearly different voices share.

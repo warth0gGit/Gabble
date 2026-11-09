@@ -100,8 +100,55 @@ final class SpeakerCheckTests: XCTestCase {
         XCTAssertEqual(rows.map(\.status), [.namedLive, .shared, .shared, .guess])
         XCTAssertEqual(rows.map(\.part), [nil, 1, 2, nil])
         XCTAssertEqual(rows[3].name, "Priya")
-        XCTAssertEqual(rows[0].clip, 0...4)
+        XCTAssertEqual(rows[0].clip, 0...10)
         XCTAssertEqual(rows.filter(\.needsCheck).count, 3)
+    }
+
+    func testAClipRunsOnThroughTheirTurnUpToFifteenSeconds() {
+        let turn = [voice("A", 0, 7), voice("A", 7.5, 12), voice("B", 12, 15), voice("A", 15, 18)]
+        XCTAssertEqual(SpeakerCheck.clip(for: "A", in: turn), 0...12)   // stops when B talks
+        let long = [voice("A", 0, 9), voice("A", 10, 31)]
+        XCTAssertEqual(SpeakerCheck.clip(for: "A", in: long), 10...25)   // the longest stretch, capped
+        XCTAssertNil(SpeakerCheck.clip(for: "Z", in: turn))
+        let yeah = [voice("A", 0, 8), voice("B", 8.2, 8.8), voice("A", 9, 13), voice("B", 13, 20)]
+        XCTAssertEqual(SpeakerCheck.clip(for: "A", in: yeah), 0...13)   // runs past B's "yeah", stops when B talks
+    }
+
+    func testAQuoteIsTheirLongestLinesInOrderUpToSixtyWords() {
+        let lines = [CallTranscript.Segment(offset: 0, speaker: "Others", text: "Hi."),
+                     CallTranscript.Segment(offset: 0, speaker: "Others", text: "We shipped the new build on Friday."),
+                     CallTranscript.Segment(offset: 0, speaker: "Others", text: "Yes."),
+                     CallTranscript.Segment(offset: 0, speaker: "Others", text: "The numbers look good this week.")]
+        let quote = CallController.quote(of: "A", in: lines, voices: [voice("A", 0, 100)])
+        // Short enough that all of it fits, in the order it was said.
+        XCTAssertEqual(quote, "Hi. We shipped the new build on Friday. Yes. The numbers look good this week.")
+        let long = (1...20).map { CallTranscript.Segment(offset: 0, speaker: "Others", text: String(repeating: "word ", count: $0)) }
+        let capped = CallController.quote(of: "A", in: long, voices: [voice("A", 0, 100)])
+        XCTAssertEqual(capped.split(separator: " ").count, CallController.quoteWords)
+        XCTAssertTrue(capped.hasSuffix("…"))
+    }
+
+    func testAClickIsAboutWhoeverWasTalkingThenOrHadJustStopped() {
+        let voices = [voice("A", 0, 5), voice("B", 6, 10), voice("A", 14, 20)]
+        XCTAssertEqual(CallController.voice(at: 3, in: voices), "A")
+        XCTAssertEqual(CallController.voice(at: 9.8, in: voices), "B")
+        XCTAssertEqual(CallController.voice(at: 12, in: voices), "B")   // B had just stopped
+        XCTAssertNil(CallController.voice(at: 30, in: voices))          // nobody near
+    }
+
+    func testOnlyTheTurnAtTheClickIsMoved() {
+        // A talks at the click and carries on: its latest turn is the clicked one.
+        let carriesOn = [voice("A", 0, 5), voice("A", 5.5, 9)]
+        XCTAssertTrue(CallController.latestTurnCovers("A", at: 3, in: carriesOn))
+        // A, then B, then A again: A's latest turn isn't the clicked one.
+        let later = [voice("A", 0, 5), voice("B", 5, 8), voice("A", 8, 12)]
+        XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: later))
+        // Anyone else in between, even briefly, or a long pause: the latest
+        // turn isn't the clicked one, so do nothing.
+        XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("B", 5, 5.5), voice("A", 5.6, 9)]))
+        XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("A", 9, 12)]))
+        // One long turn still counts: its latest part is the same person.
+        XCTAssertTrue(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("A", 5.5, 30)]))
     }
 
     func testSameNameAndSameVoiceIsNotShared() {
