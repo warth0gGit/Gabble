@@ -110,8 +110,8 @@ struct SpeakerCheck: Equatable {
     }
 
     /// Where to play a voice from: its longest stretch, carried on through
-    /// what it said straight after (until someone else talks or there's a
-    /// pause), up to `clipLength`.
+    /// what it said straight after (past someone else's quick "yeah", until
+    /// someone else really talks or there's a pause), up to `clipLength`.
     static func clip(for id: String, in voices: [VoiceSegment]) -> ClosedRange<TimeInterval>? {
         let ordered = voices.sorted { $0.start < $1.start }
         guard let first = ordered.indices.filter({ ordered[$0].speakerID == id })
@@ -119,7 +119,8 @@ struct SpeakerCheck: Equatable {
         let start = ordered[first].start
         var end = min(ordered[first].end, start + clipLength)
         for next in ordered[(first + 1)...] where end < start + clipLength {
-            guard next.speakerID == id, next.start - end <= 1.5 else { break }
+            if next.speakerID != id, next.end - next.start < 1.5 { continue }   // a quick "yeah"
+            guard next.speakerID == id, next.start - end <= 3 else { break }
             end = min(max(end, next.end), start + clipLength)
         }
         return start...end

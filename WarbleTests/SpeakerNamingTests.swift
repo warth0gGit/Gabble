@@ -110,15 +110,22 @@ final class SpeakerCheckTests: XCTestCase {
         let long = [voice("A", 0, 9), voice("A", 10, 31)]
         XCTAssertEqual(SpeakerCheck.clip(for: "A", in: long), 10...25)   // the longest stretch, capped
         XCTAssertNil(SpeakerCheck.clip(for: "Z", in: turn))
+        let yeah = [voice("A", 0, 8), voice("B", 8.2, 8.8), voice("A", 9, 13), voice("B", 13, 20)]
+        XCTAssertEqual(SpeakerCheck.clip(for: "A", in: yeah), 0...13)   // runs past B's "yeah", stops when B talks
     }
 
-    func testAQuoteIsTheirLongestLinesInOrder() {
+    func testAQuoteIsTheirLongestLinesInOrderUpToSixtyWords() {
         let lines = [CallTranscript.Segment(offset: 0, speaker: "Others", text: "Hi."),
                      CallTranscript.Segment(offset: 0, speaker: "Others", text: "We shipped the new build on Friday."),
                      CallTranscript.Segment(offset: 0, speaker: "Others", text: "Yes."),
                      CallTranscript.Segment(offset: 0, speaker: "Others", text: "The numbers look good this week.")]
         let quote = CallController.quote(of: "A", in: lines, voices: [voice("A", 0, 100)])
-        XCTAssertEqual(quote, "We shipped the new build on Friday. Yes. The numbers look good this week.")
+        // Short enough that all of it fits, in the order it was said.
+        XCTAssertEqual(quote, "Hi. We shipped the new build on Friday. Yes. The numbers look good this week.")
+        let long = (1...20).map { CallTranscript.Segment(offset: 0, speaker: "Others", text: String(repeating: "word ", count: $0)) }
+        let capped = CallController.quote(of: "A", in: long, voices: [voice("A", 0, 100)])
+        XCTAssertEqual(capped.split(separator: " ").count, CallController.quoteWords)
+        XCTAssertTrue(capped.hasSuffix("…"))
     }
 
     func testSameNameAndSameVoiceIsNotShared() {

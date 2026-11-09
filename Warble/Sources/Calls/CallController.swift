@@ -312,6 +312,10 @@ final class CallController: ObservableObject {
         voicesBeingChecked = []
         checkedAtTalk = [:]
         checkCandidates = [:]
+        pendingMove = nil
+        lastMove = nil
+        askingWords = ""
+        askingWordsKey = ""
         decisions = []
         loggedWaits = []
         askingWho = nil
@@ -367,14 +371,26 @@ final class CallController: ObservableObject {
             meLevel: recorder.meMeter.level, meThreshold: recorder.meMeter.threshold,
             othersTalking: recorder.othersMeter.isSpeaking(),
             voices: voiceSegments, asking: askingWho?.speakerID, name: { [self] in voiceName($0) },
-            confidence: nameConfidence, conflicted: conflictedNames())
+            confidence: nameConfidence)
         if updated != liveSpeakers { liveSpeakers = updated }
         // Who's this? shows what they're saying now, not what they said when it opened.
         if let asking = askingWho {
-            let words = sample(for: asking.speakerID)
-            if words != asking.sample { askingWho?.sample = words }
+            let key = "\(asking.speakerID)|\(transcript?.segments.count ?? 0)|\(voiceSegments.count)"
+            if key != askingWordsKey {
+                askingWordsKey = key
+                let words = sample(for: asking.speakerID)
+                if words != askingWords { askingWords = words }
+            }
+        } else if !askingWords.isEmpty {
+            askingWords = ""
+            askingWordsKey = ""
         }
+        if pendingMove != nil { resolvePendingMove() }
     }
+
+    /// What the voice in Who's this? has said most recently, kept current.
+    @Published private(set) var askingWords = ""
+    private var askingWordsKey = ""
 
     /// Names (lowercased) that two clearly different voices share on this
     /// call, e.g. AJ and Matt both matched to Jordan. Voices you joined
@@ -410,10 +426,14 @@ final class CallController: ObservableObject {
                              conflicted: Set<String> = []) -> [LiveSpeaker] {
         let youTalking = meTalking && !(othersTalking && meLevel < meThreshold * 3)
         var list = [LiveSpeaker(id: "you", name: "You", isYou: true, isSpeaking: youTalking)]
-        let talk = SpeakerAssigner.talkTime(voices)
+        // In the order each voice first had a chip (two seconds of talk), so a
+        // new chip always goes at the end and never shifts the ones you aim at.
+        var running: [String: TimeInterval] = [:]
         var order: [String] = []
-        for segment in voices where !order.contains(segment.speakerID) {
-            if (talk[segment.speakerID] ?? 0) >= 2 || segment.speakerID == asking { order.append(segment.speakerID) }
+        for segment in voices.sorted(by: { $0.end < $1.end }) {
+            running[segment.speakerID, default: 0] += segment.end - segment.start
+            guard !order.contains(segment.speakerID) else { continue }
+            if (running[segment.speakerID] ?? 0) >= 2 || segment.speakerID == asking { order.append(segment.speakerID) }
         }
         guard !order.isEmpty else {
             list.append(LiveSpeaker(id: "others", name: "Others", isSpeaking: othersTalking))
@@ -761,7 +781,7 @@ final class CallController: ObservableObject {
     private var heldSummaryTask: Task<Void, Never>?
     /// The check changed names after the summary was written.
     private var checkChangedAfterSummary = false
-    /// Plays the 4-second clips.
+    /// Plays the clips in "Check who spoke".
     let clips = ClipPlayer()
 
     /// A line a voice said, for recognising them. Pure.
@@ -770,8 +790,13 @@ final class CallController: ObservableObject {
             line.speaker != CallRecorder.meLabel
                 && SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: line), in: voices) == id
         }
-        // Their three longest lines, in the order they said them, up to about 60 words.
-        let longest = Set(theirs.indices.sorted { theirs[$0].text.count > theirs[$1].text.count }.prefix(3))
+        // Their longest lines until there are about 60 words, in the order they said them.
+        var longest = Set<Int>()
+        var count = 0
+        for index in theirs.indices.sorted(by: { theirs[$0].text.count > theirs[$1].text.count }) where count < quoteWords {
+            longest.insert(index)
+            count += theirs[index].text.split(separator: " ").count
+        }
         var words: [Substring] = []
         for index in theirs.indices where longest.contains(index) {
             words += theirs[index].text.split(separator: " ")
@@ -930,6 +955,7 @@ final class CallController: ObservableObject {
 
     private func heard(_ segments: [VoiceSegment]) {
         splitter.add(segments)
+        resolvePendingMove()
         checkNewVoicesAgainstKnownPeople()
         askAboutNextUnknownVoice()
     }
@@ -986,10 +1012,10 @@ final class CallController: ObservableObject {
                 // Only a sure match names a voice during the call. A "maybe" isn't
                 // shown as "Matt?"; it's the first one-tap answer in Who's this?.
                 if undecided, self.checkedAtTalk[id] != .infinity, let guess, guess.confidence != .tentative {
-                    if guess.confidence != .tentative { self.dropGuesses(of: guess.name, except: [id]) }
+                    self.dropGuesses(of: guess.name, except: [id])
                     self.namesThisCall[id] = guess.name
                     self.nameConfidence[id] = guess.confidence
-                    // Recognised (or at least a good guess) now they've said more: no need to ask.
+                    // Recognised now they've said more: no need to ask.
                     if self.askingWho?.speakerID == id { self.askingWho = nil }
                     self.refreshLiveSpeakers()
                 }
@@ -1087,8 +1113,7 @@ final class CallController: ObservableObject {
     /// tell who it is. Kept up to date while Who's this? is showing.
     private func sample(for speakerID: String) -> String {
         var words: [String] = []
-        // Only the newest lines matter; don't go over the whole call four times a second.
-        for segment in (transcript?.segments ?? []).suffix(60).reversed() where segment.speaker == CallRecorder.othersLabel {
+        for segment in (transcript?.segments ?? []).reversed() where segment.speaker == CallRecorder.othersLabel {
             guard SpeakerAssigner.speaker(for: CallTranscript.spokenRange(of: segment), in: voiceSegments) == speakerID else { continue }
             words.insert(contentsOf: segment.text.split(separator: " ").map(String.init), at: 0)
             if words.count >= Self.sampleWords { break }
@@ -1167,7 +1192,9 @@ final class CallController: ObservableObject {
 
     /// Gives `ids` a name you chose, learns the voice (from `learnFrom`) and
     /// keeps what's needed to undo it.
-    private func assign(_ ids: [String], name: String, learnFrom: String) {
+    /// `learn`: remember the voice for future calls now. A chip click doesn't:
+    /// the call's save learns everyone named from their whole-call voice.
+    private func assign(_ ids: [String], name: String, learnFrom: String, learn: Bool = true) {
         var naming = Naming(voiceIDs: ids, name: name, previousNames: [:], previousConfidence: [:], learned: nil)
         for id in ids {
             logDecision("named", voice: id, name: name, confidence: .confirmed)
@@ -1182,6 +1209,7 @@ final class CallController: ObservableObject {
         lastNaming = naming
         refreshLiveSpeakers()
         let namingID = naming.id
+        guard learn else { return askAboutNextUnknownVoice() }
         let speakers = recorder?.speakers
         let prints = splitter
         Task { [weak self] in
@@ -1256,61 +1284,101 @@ final class CallController: ObservableObject {
         refreshLiveSpeakers()
     }
 
-    /// The voice talking now, or that spoke within the last few seconds. Voice
-    /// recognition runs several seconds behind the call, so "now" is lenient.
-    private func currentVoice() -> String? {
-        guard let latest = voiceSegments.max(by: { $0.end < $1.end })?.speakerID,
-              let ago = secondsSinceHeard(latest), ago <= Self.currentVoiceWindow else { return nil }
-        return latest
+    /// A chip click waiting for voice recognition to catch up. Recognition
+    /// runs several seconds behind the call, so the click is about whoever
+    /// was talking when you clicked, found once their speech has been heard.
+    struct PendingMove: Equatable {
+        /// The chip clicked; nil for "+ New".
+        var personID: String?
+        /// Seconds into the call.
+        var at: TimeInterval
+        var clicked = Date()
     }
+    @Published private(set) var pendingMove: PendingMove?
+    /// The voice the last click moved, so a quick second click corrects it
+    /// instead of splitting it again.
+    private var lastMove: (voice: String, at: Date)?
+    /// How long a click waits for recognition before it's dropped.
+    static let pendingMoveLimit: TimeInterval = 30
+    /// A click comes a moment after you hear who's talking.
+    static let clickDelay: TimeInterval = 1
 
-    /// How long after someone stops a click still applies to them.
-    static let currentVoiceWindow: TimeInterval = 20
-
-    /// One click on a person's chip: whoever is talking now is them. A new
-    /// voice joins them; a voice that was someone else has just its latest
-    /// turn moved (what it said before keeps its name). Clicking again on
-    /// another chip moves it again, taking back what the first click taught.
+    /// One click on a person's chip: whoever was talking when you clicked is
+    /// them. A new voice joins them; a voice that was someone else has just
+    /// that turn moved (what it said before keeps its name). Clicking another
+    /// chip soon after corrects it. Nothing is learned for future calls until
+    /// the call is saved.
     func moveCurrentSpeech(to personID: String) {
-        guard isRecording, let current = currentVoice(), let target = namesThisCall[personID] else { return }
-        if namesThisCall[current]?.caseInsensitiveCompare(target) == .orderedSame { return }
-        askTimeout?.cancel()
-        var voice = current
-        if let naming = lastNaming, naming.voiceIDs.contains(current) {
-            // A correction of the last click: don't keep what it taught.
-            lastNaming = nil
-            if let label = naming.learned {
-                voices.unlearn(label)
-                liveLearned[naming.name.lowercased()]?.removeAll { $0 == label }
-            } else {
-                undoneNamings.insert(naming.id)
-            }
-        } else if namesThisCall[current] != nil, let split = splitter.splitRecent(of: current) {
-            voice = split
-        }
-        voicesChecked.insert(voice)
-        checkedAtTalk[voice] = .infinity   // you said who it is; no second-guessing
-        if askingWho?.speakerID == current || askingWho?.speakerID == voice { askingWho = nil }
-        logDecision("moved", voice: voice, name: target)
-        assign([voice], name: target, learnFrom: voice)
+        guard isRecording, namesThisCall[personID] != nil else { return }
+        queueMove(personID)
     }
 
-    /// "+ New": whoever is talking now is someone not on the chips yet.
+    /// "+ New": whoever was talking when you clicked is someone not on the chips yet.
     func newPersonTalking() {
-        guard isRecording, let current = currentVoice() else { return }
-        if namesThisCall[current] == nil {
-            askTimeout?.cancel()
-            skippedVoices.remove(current)
-            deferredVoices.remove(current)
-            ask(about: current)
-            refreshLiveSpeakers()
-        } else {
-            relabelVoice(current)
-        }
+        guard isRecording else { return }
+        queueMove(nil)
     }
 
-    /// Whether a chip click would do anything now (someone spoke recently).
-    var canMoveCurrentSpeech: Bool { currentVoice() != nil }
+    private func queueMove(_ personID: String?) {
+        guard let started = recordingStarted else { return }
+        pendingMove = PendingMove(personID: personID, at: max(0, Date().timeIntervalSince(started) - Self.clickDelay))
+        resolvePendingMove()
+    }
+
+    /// Applies the waiting click once recognition has heard that moment.
+    private func resolvePendingMove() {
+        guard let move = pendingMove, isRecording else { return }
+        if Date().timeIntervalSince(move.clicked) > Self.pendingMoveLimit {
+            pendingMove = nil
+            logDecision("move-dropped", voice: "", name: move.personID.flatMap { namesThisCall[$0] })
+            return
+        }
+        guard (voiceSegments.map(\.end).max() ?? 0) >= move.at else { return }   // not heard yet
+        pendingMove = nil
+        // Only voices with a chip (or being asked about): never a cough or an echo.
+        let talk = SpeakerAssigner.talkTime(voiceSegments)
+        let shown = voiceSegments.filter { (talk[$0.speakerID] ?? 0) >= 2 || $0.speakerID == askingWho?.speakerID }
+        guard let voice = SpeakerAssigner.speaker(for: max(0, move.at - 0.5)...(move.at + 0.5), in: shown) else {
+            logDecision("move-nobody", voice: "")
+            return
+        }
+        guard let personID = move.personID else {
+            // + New
+            if namesThisCall[voice] == nil {
+                skippedVoices.remove(voice)
+                deferredVoices.remove(voice)
+                askTimeout?.cancel()
+                ask(about: voice)
+                refreshLiveSpeakers()
+            } else {
+                relabelVoice(voice)
+            }
+            return
+        }
+        guard let target = namesThisCall[personID] else { return }
+        if namesThisCall[voice]?.caseInsensitiveCompare(target) == .orderedSame { return }
+        var moved = voice
+        let correcting = lastMove.map { $0.voice == voice && Date().timeIntervalSince($0.at) < Self.pendingMoveLimit } ?? false
+        if namesThisCall[voice] != nil && !correcting {
+            // Someone else's voice: move just their turn at that moment.
+            guard let last = voiceSegments.last(where: { $0.speakerID == voice }),
+                  last.start <= move.at + VoiceSplitter.recentSeconds,
+                  let split = splitter.splitRecent(of: voice) else {
+                logDecision("move-unsplit", voice: voice, name: target)
+                return
+            }
+            moved = split
+        }
+        voicesChecked.insert(moved)
+        checkedAtTalk[moved] = .infinity   // you said who it is; no second-guessing
+        if askingWho?.speakerID == voice || askingWho?.speakerID == moved {
+            askingWho = nil
+            askTimeout?.cancel()
+        }
+        lastMove = (moved, Date())
+        logDecision("moved", voice: moved, name: target)
+        assign([moved], name: target, learnFrom: moved, learn: false)
+    }
 
     /// "Name the one talking now" on a "Jordan ×2" chip: asks who the voice
     /// heard most recently under that name is.

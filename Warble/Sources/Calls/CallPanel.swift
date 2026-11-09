@@ -251,7 +251,8 @@ struct CallPanelView: View {
             .buttonStyle(.plain)
             .help("Stop transcribing and save the transcript")
         }
-        // Everyone on the call. Wrong person lit up? Click the right one.
+        // Everyone on the call. Click whoever is talking; the click waits a few
+        // seconds for voice recognition to catch up (its chip is outlined till then).
         FlowLayout(spacing: 6) {
             ForEach(calls.liveSpeakers) { speaker in
                 if speaker.isYou || speaker.id == "others" || speaker.isNew || speaker.name.hasPrefix("Speaker ") {
@@ -259,7 +260,9 @@ struct CallPanelView: View {
                 } else {
                     Button {
                         calls.moveCurrentSpeech(to: speaker.id)
-                    } label: { SpeakerChip(speaker: speaker) }
+                    } label: {
+                        SpeakerChip(speaker: speaker, isPending: calls.pendingMove.map { $0.personID == speaker.id } ?? false)
+                    }
                         .buttonStyle(.plain)
                         .help("Click while \(speaker.name) is talking")
                 }
@@ -273,7 +276,8 @@ struct CallPanelView: View {
                         .foregroundStyle(WarbleColor.idle)
                         .padding(.vertical, 4)
                         .padding(.horizontal, 9)
-                        .overlay(Capsule().strokeBorder(WarbleColor.line, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                        .overlay(Capsule().strokeBorder(newPending ? WarbleColor.glow : WarbleColor.line,
+                                                        style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -306,16 +310,14 @@ struct CallPanelView: View {
                 }
             }
         }
-        if !asking.sample.isEmpty {
-            // Updates as they talk, so it's always what they're saying now.
-            Text("\u{201C}\(asking.sample)\u{201D}")
-                .font(.caption)
-                .italic()
-                .foregroundStyle(.secondary)
-                .lineLimit(4)
-                .truncationMode(.head)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        // Updates as they talk, so it's always what they're saying now. Its
+        // space is kept from the start so the buttons below don't move.
+        Text(calls.askingWords.isEmpty ? " " : "\u{201C}\(calls.askingWords)\u{201D}")
+            .font(.caption)
+            .italic()
+            .foregroundStyle(.secondary)
+            .lineLimit(4, reservesSpace: true)
+            .truncationMode(.head)
         if !asking.suggestions.isEmpty {
             FlowLayout(spacing: 6) {
                 ForEach(Array(asking.suggestions.enumerated()), id: \.element.id) { index, suggestion in
@@ -348,6 +350,10 @@ struct CallPanelView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .help("Name them after the call")
+    }
+
+    private var newPending: Bool {
+        calls.pendingMove.map { $0.personID == nil } ?? false
     }
 
     /// "last spoke 0:40 ago", or "hasn't spoken for a while".
@@ -582,9 +588,11 @@ struct CallPanelView: View {
 // MARK: - Pieces
 
 /// A person's chip. It lights up green while they're talking. The voice
-/// Warble is asking about is amber and dashed.
+/// Warble is asking about is amber and dashed. A chip you just clicked is
+/// outlined until Warble has caught up with who was talking.
 struct SpeakerChip: View {
     var speaker: CallController.LiveSpeaker
+    var isPending = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -599,6 +607,7 @@ struct SpeakerChip: View {
         .foregroundStyle(textColor)
         .background(Capsule().fill(fill))
         .overlay(Capsule().strokeBorder(border, style: StrokeStyle(lineWidth: 1, dash: isWarning ? [3, 2] : [])))
+        .overlay(Capsule().strokeBorder(WarbleColor.glow, lineWidth: 1.5).opacity(isPending ? 1 : 0))
         .animation(.easeOut(duration: 0.2), value: speaker.isSpeaking)
     }
 

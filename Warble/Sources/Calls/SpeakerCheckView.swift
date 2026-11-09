@@ -22,15 +22,11 @@ struct SpeakerCheckView: View {
                 }
             }
             .padding(.bottom, 4)
-            ForEach(Array(check.rows.enumerated()), id: \.element.id) { index, row in
-                if row.status == .shared, row.part == 1 {
-                    Text("Two voices called \(row.name ?? "")")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(CallPanelColor.amber)
-                        .padding(.top, 8)
-                }
-                rowView(row)
-                if index < check.rows.count - 1 { Divider() }
+            // A long call's list scrolls rather than pushing Done off the screen.
+            if check.rows.count > 3 {
+                ScrollView { rows }.frame(height: 440)
+            } else {
+                rows
             }
             HStack {
                 Button("Later") { calls.postponeCheck() }
@@ -47,6 +43,21 @@ struct SpeakerCheckView: View {
         }
     }
 
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(check.rows.enumerated()), id: \.element.id) { index, row in
+                if row.status == .shared, row.part == 1 {
+                    Text("Two voices called \(row.name ?? "")")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(CallPanelColor.amber)
+                        .padding(.top, 8)
+                }
+                rowView(row)
+                if index < check.rows.count - 1 { Divider() }
+            }
+        }
+    }
+
     @ViewBuilder
     private func rowView(_ row: SpeakerCheck.Row) -> some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -59,15 +70,6 @@ struct SpeakerCheckView: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(row.needsCheck ? CallPanelColor.amber : .secondary)
                             .lineLimit(1)
-                    }
-                    if !row.quote.isEmpty {
-                        Text("\u{201C}\(row.quote)\u{201D}")
-                            .font(.caption)
-                            .italic()
-                            .foregroundStyle(.secondary)
-                            .lineLimit(4)
-                            .truncationMode(.tail)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 4)
@@ -82,8 +84,19 @@ struct SpeakerCheckView: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .help("Play \(Int(SpeakerCheck.clipLength)) seconds of this voice")
+                    .help("Play this voice")
                 }
+            }
+            // What they said, at full width so there's enough to know them by.
+            if !row.quote.isEmpty {
+                Text("\u{201C}\(row.quote)\u{201D}")
+                    .font(.caption)
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(8)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 40)
             }
             fixes(row)
         }
