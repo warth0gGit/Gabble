@@ -87,8 +87,22 @@ final class CallController: ObservableObject {
         var suggestions: [NameSuggestion] = []
         /// When Warble started asking, so the pill only pulses for a moment.
         var askedAt = Date()
+        /// You asked for it (+ New, "not them", Undo): not put away for a while.
+        var byYou = false
     }
-    @Published private(set) var askingWho: UnknownVoice?
+    @Published private(set) var askingWho: UnknownVoice? {
+        didSet {
+            guard oldValue?.speakerID != askingWho?.speakerID else { return }
+            // A card closed or changed: a new one mustn't appear under the
+            // pointer straight away, and typing state belongs to the old one.
+            if oldValue != nil { lastCardClosed = Date() }
+            lastAnswerTyping = nil
+            answerHasText = false
+        }
+    }
+    private var lastCardClosed = Date.distantPast
+    /// Voices whose card was put away, and when, so a quick "yeah" doesn't reopen it.
+    private var parkedAt: [String: Date] = [:]
     /// How sure Warble is of each voice's name on this call. A `.tentative`
     /// name shows as "Jordan?" and is never learned until you confirm it.
     @Published private(set) var nameConfidence: [String: NameConfidence] = [:]
@@ -313,6 +327,8 @@ final class CallController: ObservableObject {
         checkCandidates = [:]
         pendingMove = nil
         lastMove = nil
+        parkedAt = [:]
+        lastCardClosed = .distantPast
         askingWords = ""
         askingWordsKey = ""
         decisions = []
@@ -385,6 +401,8 @@ final class CallController: ObservableObject {
             askingWordsKey = ""
         }
         if pendingMove != nil { resolvePendingMove() }
+        parkStaleQuestion()
+        if askingWho == nil { askAboutNextUnknownVoice() }
     }
 
     /// What the voice in Who's this? has said most recently, kept current.
@@ -1034,7 +1052,11 @@ final class CallController: ObservableObject {
         let unnamed = firstHeard.filter {
             namesThisCall[$0] == nil && voicesChecked.contains($0) && !skippedVoices.contains($0) && (talk[$0] ?? 0) >= askAfterSeconds
         }
-        for id in unnamed {
+        // Only ask about a voice while it's talking: on Jonny's call, cards
+        // about someone who'd gone quiet were answered with whoever was talking.
+        guard Date().timeIntervalSince(lastCardClosed) >= 2 else { return }
+        for id in unnamed where isFreshForAsking(id)
+            && Date().timeIntervalSince(parkedAt[id] ?? .distantPast) >= Self.parkedQuietSeconds {
             // Sounds a bit like someone on file, and is rechecked soon: give that check a chance first.
             if VoiceMatcher.shouldWaitBeforeAsking(candidates: checkCandidates[id] ?? [], talk: talk[id] ?? 0,
                                                    lastChecked: checkedAtTalk[id], rechecks: Self.recheckAfter) {
@@ -1043,7 +1065,7 @@ final class CallController: ObservableObject {
                 }
                 continue
             }
-            ask(about: id)
+            ask(about: id, byYou: false)
             return
         }
     }
@@ -1051,13 +1073,13 @@ final class CallController: ObservableObject {
     /// Shows "Who's this?" for a voice, then fills in one-tap suggestions:
     /// a name heard said, the people on file it sounds most like, and (only
     /// when the voices really are close) someone already on this call.
-    private func ask(about id: String, excluding excluded: String? = nil) {
+    private func ask(about id: String, excluding excluded: String? = nil, byYou: Bool = true) {
         let hint = nameHint(for: id).flatMap { $0.caseInsensitiveCompare(excluded ?? "") == .orderedSame ? nil : $0 }
         logDecision("ask", voice: id, name: hint)
         askingWords = sample(for: id)
         askingWordsKey = "\(id)|\(transcript?.segments.count ?? 0)|\(voiceSegments.count)"
         askingWho = UnknownVoice(speakerID: id, hint: hint,
-                                 suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []))
+                                 suggestions: NameSuggestion.build(hint: hint, candidates: [], onCall: []), byYou: byYou)
         restartAskTimeout()
         let askedAt = askingWho?.askedAt
         guard let speakers = recorder?.speakers else { return }
@@ -1085,6 +1107,56 @@ final class CallController: ObservableObject {
             self.askingWho?.suggestions = NameSuggestion.build(hint: hint, candidates: candidates,
                                                                onCall: close.map { ($0.name, $0.voiceID, $0.distance) })
         }
+    }
+
+    /// You're typing a name: the card stays put, even if they've gone quiet,
+    /// and never goes away with a name half-typed.
+    func answerTyping(hasText: Bool) {
+        // The box being cleared for a new card isn't you typing.
+        if hasText { lastAnswerTyping = Date() }
+        answerHasText = hasText
+        restartAskTimeout()
+    }
+    private var lastAnswerTyping: Date?
+    private var answerHasText = false
+    /// After a card is put away, how long before that voice can be asked about again.
+    static let parkedQuietSeconds: TimeInterval = 20
+
+    /// How far behind the newest speech heard a voice last spoke, by voice
+    /// recognition's own clock (so its lag doesn't count). Pure, unit tested.
+    nonisolated static func behindLatest(_ id: String, in segments: [VoiceSegment]) -> TimeInterval? {
+        guard let mine = segments.filter({ $0.speakerID == id }).map(\.end).max(),
+              let latest = segments.map(\.end).max() else { return nil }
+        return latest - mine
+    }
+
+    /// Talking now, or the last voice heard: a fair time to ask who it is.
+    private func isFreshForAsking(_ id: String) -> Bool {
+        guard let behind = Self.behindLatest(id, in: voiceSegments), let ago = secondsSinceHeard(id) else { return false }
+        // Recognition runs about ten seconds behind; any older and someone
+        // else may already be talking.
+        return behind <= 3 && ago <= 13
+    }
+
+    /// Someone else has been talking for a while, or nobody for long: a card
+    /// about this voice would be answered about the wrong person.
+    private func isStaleForAsking(_ id: String) -> Bool {
+        guard let behind = Self.behindLatest(id, in: voiceSegments), let ago = secondsSinceHeard(id) else { return true }
+        // The other side is talking, but not (as far as recognition has got) them.
+        let othersTalking = recorder?.othersMeter.isSpeaking() ?? false
+        return behind > 8 || ago > 35 || (othersTalking && ago > 16)
+    }
+
+    /// Puts away a Who's this? card once its voice has gone quiet (unless
+    /// you're typing). It comes back when they talk again.
+    private func parkStaleQuestion() {
+        guard let asking = askingWho, isStaleForAsking(asking.speakerID), !answerHasText,
+              Date().timeIntervalSince(lastAnswerTyping ?? .distantPast) > 10,
+              !(asking.byYou && Date().timeIntervalSince(asking.askedAt) < 20) else { return }
+        logDecision("parked", voice: asking.speakerID)
+        parkedAt[asking.speakerID] = Date()
+        askTimeout?.cancel()
+        askingWho = nil
     }
 
     /// Starts (again) the minute "Who's this?" waits before moving on.
