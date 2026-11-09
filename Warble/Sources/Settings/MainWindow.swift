@@ -1,13 +1,19 @@
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, general, dictation, lexicon, calls, filing, permissions
+    case home, transcripts, people, general, dictation, lexicon, calls, filing, permissions
 
     var id: String { rawValue }
+
+    /// Home, Transcripts and People sit above the settings pages.
+    static let main: [SettingsSection] = [.home, .transcripts, .people]
+    static let settings: [SettingsSection] = allCases.filter { !SettingsSection.main.contains($0) }
 
     var title: String {
         switch self {
         case .home: return "Home"
+        case .transcripts: return "Transcripts"
+        case .people: return "People"
         case .general: return "General"
         case .dictation: return "Dictation"
         case .lexicon: return "Word List"
@@ -20,6 +26,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .home: return "house"
+        case .transcripts: return "doc.text"
+        case .people: return "person.2"
         case .general: return "gearshape"
         case .dictation: return "mic"
         case .lexicon: return "character.book.closed"
@@ -41,6 +49,8 @@ struct MainWindow: View {
 
     @EnvironmentObject private var permissions: PermissionsManager
     @State private var selection: SettingsSection? = .home
+    /// What the Transcripts tab is searching for (People's "Show all their calls" sets it).
+    @State private var transcriptQuery = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,10 +65,17 @@ struct MainWindow: View {
 
     private var splitView: some View {
         NavigationSplitView {
-            List(SettingsSection.allCases, selection: $selection) { section in
-                Label(section.title, systemImage: section.icon)
-                    .badge(section == .permissions && !permissions.allRequiredGranted ? Text("!") : nil)
-                    .tag(section)
+            List(selection: $selection) {
+                ForEach(SettingsSection.main) { section in
+                    Label(section.title, systemImage: section.icon).tag(section)
+                }
+                Section("Settings") {
+                    ForEach(SettingsSection.settings) { section in
+                        Label(section.title, systemImage: section.icon)
+                            .badge(section == .permissions && !permissions.allRequiredGranted ? Text("!") : nil)
+                            .tag(section)
+                    }
+                }
             }
             .safeAreaInset(edge: .bottom) {
                 Text(Self.versionText)
@@ -72,10 +89,16 @@ struct MainWindow: View {
         } detail: {
             switch selection ?? .home {
             case .home: HomeView(onOpen: { selection = $0 })
+            case .transcripts: TranscriptsView(query: $transcriptQuery)
+            case .people:
+                PeopleView(onShowCalls: { name in
+                    transcriptQuery = name
+                    selection = .transcripts
+                })
             case .general: GeneralView(onShowPermissions: { selection = .permissions })
             case .dictation: DictationView()
             case .lexicon: LexiconView()
-            case .calls: CallsView()
+            case .calls: CallsView(onShowTranscripts: { selection = .transcripts })
             case .filing: FilingView()
             case .permissions: PermissionsView()
             }

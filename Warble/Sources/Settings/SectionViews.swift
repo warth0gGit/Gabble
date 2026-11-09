@@ -346,14 +346,7 @@ struct LexiconView: View {
 struct CallsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var calls: CallController
-    @State private var recent: [URL] = []
-    @State private var sharing: ShareTarget?
-    @State private var checking = false
-
-    private struct ShareTarget: Identifiable {
-        let url: URL
-        var id: URL { url }
-    }
+    var onShowTranscripts: () -> Void = {}
 
     var body: some View {
         Form {
@@ -362,6 +355,7 @@ struct CallsView: View {
                 Text("When one of the apps below starts using your microphone, Warble asks whether to transcribe. It records your voice and the other people's audio separately, transcribes both on this Mac, and saves the transcript to your Calls folder when the call ends.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                Button("See your calls in Transcripts", action: onShowTranscripts)
             }
             Section("Watch these apps for calls") {
                 ForEach(AppState.defaultCallApps, id: \.self) { app in
@@ -386,228 +380,10 @@ struct CallsView: View {
                     }
                 }
             }
-            if let check = calls.speakerCheck, !calls.isRecording {
-                Section("Last call") {
-                    HStack {
-                        Text(check.url.deletingPathExtension().lastPathComponent).lineLimit(1)
-                        Spacer()
-                        if check.toCheck > 0 {
-                            Text("\(check.toCheck) to check").font(.caption).foregroundStyle(CallPanelColor.amber)
-                        }
-                        Button("Speakers") {
-                            calls.reopenCheck()
-                            checking = true
-                        }
-                        .help("Check and fix who spoke on this call")
-                    }
-                }
-            }
-            Section("Recent transcripts") {
-                if recent.isEmpty {
-                    Text("No transcripts yet.").foregroundStyle(.secondary)
-                }
-                ForEach(recent, id: \.self) { url in
-                    HStack {
-                        Text(url.deletingPathExtension().lastPathComponent)
-                        Spacer()
-                        Button("Share") { sharing = ShareTarget(url: url) }
-                            .buttonStyle(.borderless)
-                            .help("Make a tidy PDF of this call to send to people")
-                        Button("Open") { NSWorkspace.shared.open(url) }
-                            .buttonStyle(.borderless)
-                    }
-                }
-                Button("Show Calls folder in Finder") {
-                    try? FileManager.default.createDirectory(at: calls.callsFolder, withIntermediateDirectories: true)
-                    NSWorkspace.shared.activateFileViewerSelecting([calls.callsFolder])
-                }
-            }
             SummaryEngineSection(queue: calls.summaryQueue)
-            KnownVoicesSection(voices: calls.voices)
         }
         .formStyle(.grouped)
         .navigationTitle("Calls")
-        .sheet(item: $sharing) { target in ShareCallSheet(note: target.url) }
-        .sheet(isPresented: $checking) {
-            VStack(alignment: .leading, spacing: 12) {
-                if let check = calls.speakerCheck, !check.finished {
-                    SpeakerCheckView(clips: calls.clips, check: check)
-                } else {
-                    Label("Speakers saved", systemImage: "checkmark.circle.fill").foregroundStyle(WarbleColor.green)
-                    HStack { Spacer(); Button("Close") { checking = false }.keyboardShortcut(.defaultAction) }
-                }
-            }
-            .padding(20)
-            .frame(width: 420)
-            .environmentObject(calls)
-        }
-        .onAppear { recent = calls.recentTranscripts() }
-        .onChange(of: calls.state) { _, _ in recent = calls.recentTranscripts() }
-    }
-}
-
-/// The people Warble recognises by voice on calls: how well it knows each
-/// voice, and Rename, Merge into… and Forget (with Undo).
-struct KnownVoicesSection: View {
-    @ObservedObject var voices: VoiceprintStore
-    @State private var renaming: Voiceprint?
-    @State private var newName = ""
-    @State private var forgetting: Voiceprint?
-    @State private var forgotten: Voiceprint?
-    @State private var undoTask: Task<Void, Never>?
-
-    var body: some View {
-        Section("People Warble knows by voice") {
-            Text("During a call, when Warble hears someone it doesn't know, it asks \"Who's this?\". Their voice is remembered here, on this Mac only, so next time their lines are labeled automatically.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            if voices.voices.isEmpty {
-                Text("Nobody yet.").foregroundStyle(.secondary)
-            }
-            ForEach(sorted) { voice in
-                row(voice)
-            }
-            if let gone = forgotten {
-                HStack {
-                    Text("Forgot \(gone.name).").foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Undo") { restore(gone) }
-                }
-            }
-        }
-        .alert("Rename \(renaming?.name ?? "")", isPresented: Binding(
-            get: { renaming != nil }, set: { if !$0 { renaming = nil } }
-        )) {
-            TextField("Name", text: $newName)
-            Button("Rename") {
-                if let voice = renaming { voices.rename(from: voice.name, to: newName) }
-                renaming = nil
-            }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        } message: {
-            Text("If someone already has this name, the two are joined as one person.")
-        }
-        .confirmationDialog("Forget \(forgetting?.name ?? "")?", isPresented: Binding(
-            get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }
-        )) {
-            Button("Forget", role: .destructive) {
-                if let voice = forgetting { forget(voice) }
-                forgetting = nil
-            }
-        } message: {
-            Text("Warble will ask \"Who's this?\" again next time they're on a call.")
-        }
-    }
-
-    private var sorted: [Voiceprint] {
-        voices.voices.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    private func row(_ voice: Voiceprint) -> some View {
-        let duplicate = Self.likelyDuplicate(of: voice, in: voices.voices)
-        let strength = Self.strength(voice)
-        return HStack(spacing: 10) {
-            Text(Self.initials(voice.name, among: voices.voices.map(\.name)))
-                .font(.caption.weight(.semibold))
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(WarbleColor.surface))
-                .overlay(Circle().strokeBorder(WarbleColor.line, lineWidth: 1))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(voice.name)
-                HStack(spacing: 4) {
-                    Text("Last updated \(voice.updated.formatted(date: .abbreviated, time: .omitted))")
-                    if let duplicate {
-                        Text("· maybe the same person as \(duplicate.name)").foregroundStyle(CallPanelColor.amber)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if let duplicate {
-                Button("Merge") { voices.merge(voice.name, into: duplicate.name) }
-                    .help("Join \(voice.name) into \(duplicate.name)")
-            }
-            VStack(alignment: .trailing, spacing: 2) {
-                HStack(spacing: 2) {
-                    ForEach(0..<4, id: \.self) { i in
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(i < strength.bars ? WarbleColor.green : WarbleColor.line)
-                            .frame(width: 5, height: 9)
-                    }
-                }
-                Text(strength.label).font(.caption2).foregroundStyle(.secondary)
-            }
-            Menu {
-                Button("Rename…") { newName = voice.name; renaming = voice }
-                let others = sorted.filter { $0.id != voice.id }
-                if !others.isEmpty {
-                    Menu("Merge into…") {
-                        ForEach(others) { other in
-                            Button(other.name) { voices.merge(voice.name, into: other.name) }
-                        }
-                    }
-                }
-                Divider()
-                Button("Forget…", role: .destructive) { forgetting = voice }
-            } label: {
-                Image(systemName: "ellipsis")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
-    }
-
-    private func forget(_ voice: Voiceprint) {
-        voices.forget(voice)
-        forgotten = voice
-        undoTask?.cancel()
-        undoTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(15))
-            if !Task.isCancelled { forgotten = nil }
-        }
-    }
-
-    /// Puts a forgotten person back, with every recording Warble had of them.
-    private func restore(_ voice: Voiceprint) {
-        for print in voice.prints { voices.remember(name: voice.name, embedding: print) }
-        forgotten = nil
-        undoTask?.cancel()
-    }
-
-    // MARK: - Pure, unit tested
-
-    /// How well Warble knows a voice, from how many recordings of them it keeps.
-    static func strength(_ voice: Voiceprint) -> (bars: Int, label: String) {
-        switch voice.prints.count {
-        case ...1: return (1, "Still learning")
-        case 2...3: return (2, "Getting there")
-        case 4...5: return (3, "Knows well")
-        default: return (4, "Knows well")
-        }
-    }
-
-    /// "AJ" for AJ Patel, "MK" for Matt Kern, "M" for Matt, so people who
-    /// share a first letter don't look alike.
-    static func initials(_ name: String, among names: [String]) -> String {
-        let parts = name.split(separator: " ")
-        if parts.count >= 2 { return (String(parts[0].prefix(1)) + String(parts[parts.count - 1].prefix(1))).uppercased() }
-        let word = String(parts.first ?? "")
-        if word.count <= 2 { return word.uppercased() }
-        return String(word.prefix(1)).uppercased()
-    }
-
-    /// Someone else on file who's probably the same person: one name is the
-    /// other's first name (Matt / Matt Kern) and the voices are close.
-    static func likelyDuplicate(of voice: Voiceprint, in all: [Voiceprint]) -> Voiceprint? {
-        func first(_ name: String) -> String { name.split(separator: " ").first.map { $0.lowercased() } ?? name.lowercased() }
-        let isShort = !voice.name.contains(" ")
-        guard isShort else { return nil }   // offer merging the short name into the full one
-        return all.first { other in
-            other.id != voice.id && other.name.contains(" ") && first(other.name) == voice.name.lowercased()
-                && VoiceMatcher.distance(voice.embedding, to: other) <= VoiceMatcher.tentativeDistance
-        }
     }
 }
 

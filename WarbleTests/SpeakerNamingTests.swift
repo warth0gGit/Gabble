@@ -64,25 +64,25 @@ final class KnownVoicesTests: XCTestCase {
     }
 
     func testInitialsTellSimilarNamesApart() {
-        XCTAssertEqual(KnownVoicesSection.initials("AJ Patel", among: []), "AP")
-        XCTAssertEqual(KnownVoicesSection.initials("AJ", among: []), "AJ")
-        XCTAssertEqual(KnownVoicesSection.initials("Matt Kern", among: []), "MK")
-        XCTAssertEqual(KnownVoicesSection.initials("Matt", among: []), "M")
+        XCTAssertEqual(PeopleView.initials("AJ Patel", among: []), "AP")
+        XCTAssertEqual(PeopleView.initials("AJ", among: []), "AJ")
+        XCTAssertEqual(PeopleView.initials("Matt Kern", among: []), "MK")
+        XCTAssertEqual(PeopleView.initials("Matt", among: []), "M")
     }
 
     func testStrengthGrowsWithRecordings() {
-        XCTAssertEqual(KnownVoicesSection.strength(person("A", [1, 0], samples: 1)).label, "Still learning")
-        XCTAssertEqual(KnownVoicesSection.strength(person("A", [1, 0], samples: 3)).bars, 2)
-        XCTAssertEqual(KnownVoicesSection.strength(person("A", [1, 0], samples: 8)).bars, 4)
+        XCTAssertEqual(PeopleView.strength(person("A", [1, 0], samples: 1)).label, "Still learning")
+        XCTAssertEqual(PeopleView.strength(person("A", [1, 0], samples: 3)).bars, 2)
+        XCTAssertEqual(PeopleView.strength(person("A", [1, 0], samples: 8)).bars, 4)
     }
 
     func testShortNameWithACloseVoiceIsALikelyDuplicate() {
         let matt = person("Matt", [1, 0])
         let mattKern = person("Matt Kern", [0.99, 0.05])
         let other = person("Matthew Lee", [0, 1])
-        XCTAssertEqual(KnownVoicesSection.likelyDuplicate(of: matt, in: [matt, mattKern, other])?.name, "Matt Kern")
-        XCTAssertNil(KnownVoicesSection.likelyDuplicate(of: mattKern, in: [matt, mattKern]))
-        XCTAssertNil(KnownVoicesSection.likelyDuplicate(of: person("Matt", [0, 1]), in: [mattKern]))
+        XCTAssertEqual(PeopleView.likelyDuplicate(of: matt, in: [matt, mattKern, other])?.name, "Matt Kern")
+        XCTAssertNil(PeopleView.likelyDuplicate(of: mattKern, in: [matt, mattKern]))
+        XCTAssertNil(PeopleView.likelyDuplicate(of: person("Matt", [0, 1]), in: [mattKern]))
     }
 }
 

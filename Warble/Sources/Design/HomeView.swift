@@ -40,9 +40,9 @@ struct HomeView: View {
                     )
                     card(
                         icon: "phone.bubble",
-                        title: "Calls",
-                        text: "Transcribing Teams and Zoom calls, with who said what, is coming next.",
-                        action: ("Call settings", .calls)
+                        title: "Your calls",
+                        text: "Warble transcribes Teams, Zoom and Meet calls, names who spoke and files them. Find them all in Transcripts.",
+                        action: ("Transcripts", .transcripts)
                     )
                 }
                 if !dictation.lastResult.isEmpty {

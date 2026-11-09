@@ -42,12 +42,12 @@ struct WarbleApp: App {
                 .environmentObject(lexicon)
                 .environmentObject(dictation)
                 .environmentObject(calls)
-                .frame(minWidth: 760, minHeight: 520)
+                .frame(minWidth: 900, minHeight: 560)
                 .warbleTheme()
                 .containerBackground(WarbleColor.background, for: .window)
                 .background(OpenWindowCapture())
         }
-        .defaultSize(width: 880, height: 600)
+        .defaultSize(width: 1080, height: 700)
     }
 }
 

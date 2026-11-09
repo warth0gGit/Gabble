@@ -135,6 +135,8 @@ final class CallController: ObservableObject {
     static let askTimeoutSeconds: TimeInterval = 60
     /// Voices Warble has learned, kept between calls.
     let voices = VoiceprintStore()
+    /// Every saved call, for the Transcripts and People tabs.
+    let library = CallLibrary()
     /// Every stretch of the other side's speech this call, checked so people
     /// the voice engine lumped together are told apart (see VoiceSplitter).
     private var splitter = VoiceSplitter()
@@ -1758,18 +1760,6 @@ final class CallController: ObservableObject {
         }
         try transcript.markdown.write(to: url, atomically: true, encoding: .utf8)
         return url
-    }
-
-    /// The most recent saved transcripts, newest first.
-    func recentTranscripts(limit: Int = 10) -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: callsFolder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
-        let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "md" }
-        let dated = files.map { url -> (URL, Date) in
-            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            return (url, date)
-        }
-        return dated.sorted { $0.1 > $1.1 }.prefix(limit).map(\.0)
     }
 
     // MARK: - Pop-up
