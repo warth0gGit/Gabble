@@ -143,9 +143,11 @@ final class SpeakerCheckTests: XCTestCase {
         // A, then B, then A again: A's latest turn isn't the clicked one.
         let later = [voice("A", 0, 5), voice("B", 5, 8), voice("A", 8, 12)]
         XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: later))
-        // A short "yeah" from B doesn't end A's turn; a long pause does.
-        XCTAssertTrue(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("B", 5, 5.5), voice("A", 5.6, 9)]))
+        // Anyone else in between, a long pause, or a turn longer than the
+        // splitter takes means the clicked moment wouldn't be moved: do nothing.
+        XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("B", 5, 5.5), voice("A", 5.6, 9)]))
         XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("A", 9, 12)]))
+        XCTAssertFalse(CallController.latestTurnCovers("A", at: 3, in: [voice("A", 0, 5), voice("A", 5.5, 14)]))
     }
 
     func testSameNameAndSameVoiceIsNotShared() {

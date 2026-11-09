@@ -1318,23 +1318,21 @@ final class CallController: ObservableObject {
         return segments.filter { $0.end <= moment && moment - $0.end <= 3 }.max { $0.end < $1.end }?.speakerID
     }
 
-    /// Whether `voice`'s latest turn is the one heard at `moment`: it runs on
-    /// from then with no one else talking in between. Only then does moving
-    /// its latest turn move what you clicked about. Pure, unit tested.
+    /// Whether `voice`'s latest turn, as `VoiceSplitter.splitRecent` takes
+    /// it, includes what was heard at `moment`: it runs on from then with
+    /// nobody else in between, no pause over 1.5 s, and starts within the
+    /// splitter's 12 seconds of its end. Only then does moving its latest turn
+    /// move what you clicked about. Pure, unit tested.
     nonisolated static func latestTurnCovers(_ voice: String, at moment: TimeInterval, in segments: [VoiceSegment]) -> Bool {
         let ordered = segments.sorted { $0.start < $1.start }
         guard let first = ordered.firstIndex(where: { $0.speakerID == voice && $0.end >= moment - 3 }),
               ordered[first].start <= moment + 0.5 else { return false }
         var end = ordered[first].end
         for next in ordered[(first + 1)...] {
-            if next.speakerID == voice {
-                guard next.start - end <= 1.5 else { return false }   // a pause: a later turn
-                end = max(end, next.end)
-            } else if next.end - next.start >= 1 {
-                return false   // someone else spoke after it
-            }
+            guard next.speakerID == voice, next.start - end <= 1.5 else { return false }   // someone else, or a pause
+            end = max(end, next.end)
         }
-        return true
+        return end - ordered[first].start <= VoiceSplitter.recentSeconds
     }
     /// A click comes a moment after you hear who's talking.
     static let clickDelay: TimeInterval = 1
@@ -1384,9 +1382,12 @@ final class CallController: ObservableObject {
         let correcting = lastMove.map { $0.voice == voice && Date().timeIntervalSince($0.at) < Self.pendingMoveLimit } ?? false
         // A named voice (that you didn't just move) has only its turn at the
         // click moved, and only when its latest turn is that one.
+        // Clicking the person who's already showing changes nothing.
+        if let id = move.personID, let target = namesThisCall[id],
+           namesThisCall[voice]?.caseInsensitiveCompare(target) == .orderedSame { return }
         var moved = voice
         if namesThisCall[voice] != nil && !correcting {
-            guard Self.latestTurnCovers(voice, at: move.at, in: shown), let split = splitter.splitRecent(of: voice) else {
+            guard Self.latestTurnCovers(voice, at: move.at, in: voiceSegments), let split = splitter.splitRecent(of: voice) else {
                 logDecision("move-unsplit", voice: voice, name: move.personID.flatMap { namesThisCall[$0] })
                 return
             }
@@ -1394,7 +1395,7 @@ final class CallController: ObservableObject {
         }
         guard let personID = move.personID else {
             // + New: ask who the voice heard at the click is.
-            let excluded = moved == voice ? nil : namesThisCall[voice]
+            let excluded = namesThisCall[voice]
             voicesChecked.insert(moved)
             checkedAtTalk[moved] = .infinity
             skippedVoices.remove(moved)
