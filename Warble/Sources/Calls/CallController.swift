@@ -146,8 +146,8 @@ final class CallController: ObservableObject {
     private var voicesBeingChecked: Set<String> = []
     /// How much each voice had said when it was last compared.
     private var checkedAtTalk: [String: TimeInterval] = [:]
-    /// How many people were named on the call when each voice was last checked.
-    private var namedAtCheck: [String: Int] = [:]
+    /// The sure names on the call ("voice=name") when each voice was last checked.
+    private var namedAtCheck: [String: Set<String>] = [:]
     /// Who on file each unnamed voice sounded a bit like at its last check,
     /// so "Who's this?" can wait for a recheck that may well name it.
     private var checkCandidates: [String: [(name: String, distance: Float)]] = [:]
@@ -995,15 +995,15 @@ final class CallController: ObservableObject {
     private func checkNewVoicesAgainstKnownPeople() {
         guard let speakers = recorder?.speakers else { return }
         let talk = SpeakerAssigner.talkTime(voiceSegments)
+        let namedNow = VoiceMatcher.namedKeys(namesThisCall.filter { isKnown($0.key) })
         for id in Set(voiceSegments.map(\.speakerID)) where !voicesBeingChecked.contains(id) && !isKnown(id) {
             let spoken = talk[id] ?? 0
             guard spoken >= askAfterSeconds else { continue }
-            let namedNow = Set(namesThisCall.filter { isKnown($0.key) }.values.map { $0.lowercased() }).count
             if voicesChecked.contains(id) {
                 // Not recognised last time: try again once they've said more,
                 // or once someone new has been named on the call.
                 guard VoiceMatcher.shouldCheckAgain(talk: spoken, lastChecked: checkedAtTalk[id] ?? 0,
-                                                    rechecks: Self.recheckAfter, namedOnCall: namedNow,
+                                                    rechecks: Self.recheckAfter, named: namedNow,
                                                     namedAtLastCheck: namedAtCheck[id]) else { continue }
             }
             checkedAtTalk[id] = spoken
