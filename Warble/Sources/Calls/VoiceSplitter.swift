@@ -181,10 +181,16 @@ struct VoiceSplitter {
 
     /// The voice heard so far that `embedding` clearly sounds like, if any.
     private func voiceHeardEarlier(soundingLike embedding: [Float]) -> String? {
-        // Nearest voice per person (a named person's voices count as one).
+        // Nearest voice per person (a named person's voices count as one,
+        // unless that name is on two voices that sound nothing alike).
+        let named = anchors.compactMap { id, anchor in
+            anchor.seconds >= 2 ? names[id].map { (name: $0, print: anchor.sum) } : nil
+        }
+        let mixedUp = VoiceMatcher.conflictingNames(named)
         var nearest: [String: (id: String, distance: Float)] = [:]
         for (id, anchor) in anchors where anchor.seconds >= 2 {
-            let person = names[id].map { "name:" + $0.lowercased() } ?? id
+            var person = id
+            if let name = names[id]?.lowercased(), !mixedUp.contains(name) { person = "name:" + name }
             let distance = Self.distance(embedding, anchor.sum)
             if distance < nearest[person]?.distance ?? .infinity { nearest[person] = (id, distance) }
         }

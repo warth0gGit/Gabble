@@ -422,6 +422,55 @@ enum VoiceMatcher {
         return next <= limit
     }
 
+    /// Whether an unnamed voice is due another check: at the talk totals in
+    /// `rechecks`, and whenever the sure names on the call have changed since
+    /// its last check (a voice named, renamed or un-named: each brings or
+    /// takes away a voice to compare with). On Jonny's call of 9 November,
+    /// Ann talked for over seven minutes as an unnamed voice beside a voice
+    /// named Ann (0.27 apart): her rechecks had run out before that voice was
+    /// named, and "Ann" was already on the call (wrongly, on another voice),
+    /// so counting names wouldn't have noticed. Pure, unit tested.
+    /// - Parameters:
+    ///   - talk: seconds this voice has talked so far.
+    ///   - lastChecked: its talk total when it was last checked (nil: never;
+    ///     infinity: you said who it isn't, so Warble mustn't guess).
+    ///   - named: the sure names on the call now, as "voice=name" (see `namedKeys`).
+    ///   - namedAtLastCheck: the same, at its last check.
+    static func shouldCheckAgain(talk: TimeInterval, lastChecked: TimeInterval?, rechecks: [TimeInterval],
+                                 named: Set<String>, namedAtLastCheck: Set<String>?) -> Bool {
+        guard let last = lastChecked else { return true }
+        guard last.isFinite else { return false }
+        if rechecks.contains(where: { $0 > last && talk >= $0 }) { return true }
+        return named != (namedAtLastCheck ?? [])
+    }
+
+    /// The sure names on a call as "voice=name", for `shouldCheckAgain`.
+    static func namedKeys(_ names: [String: String]) -> Set<String> {
+        Set(names.map { "\($0.key)=\($0.value.lowercased())" })
+    }
+
+    /// Two voices this far apart can't both be the same person.
+    static let conflictDistance: Float = 0.8
+
+    /// Names given to two voices that sound nothing alike (e.g. Murali's
+    /// voice named "Ann" by mistake while Ann was talking, on 9 November).
+    /// Until that's sorted out, the voice splitter treats such voices as
+    /// separate people rather than one, so they compete with each other
+    /// and a new voice joins one of them only when it's clearly nearest.
+    /// (They stay in the live check: there each voice is compared on its own
+    /// with a 0.1 lead, and dropping the name would also have dropped Ann's
+    /// real voice on that call.) Lowercased. Pure, unit tested.
+    static func conflictingNames(_ voices: [(name: String, print: [Float])],
+                                 apart limit: Float = conflictDistance) -> Set<String> {
+        var conflicts = Set<String>()
+        for (i, a) in voices.enumerated() {
+            for b in voices[(i + 1)...] where a.name.caseInsensitiveCompare(b.name) == .orderedSame {
+                if distance(a.print, b.print) > limit { conflicts.insert(a.name.lowercased()) }
+            }
+        }
+        return conflicts
+    }
+
     /// Everyone on file, nearest first.
     private static func ranked(_ embedding: [Float], _ known: [Voiceprint]) -> [(name: String, distance: Float)] {
         known.map { (name: $0.name, distance: distance(embedding, to: $0)) }.sorted { $0.distance < $1.distance }

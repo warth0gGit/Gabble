@@ -408,6 +408,36 @@ final class ChunkAndGapTests: XCTestCase {
         XCTAssertEqual(EngineClock.callTime(5, gaps: []), 5)
     }
 
+    func testAnUnnamedVoiceIsCheckedAgainWhenTheNamesChange() {
+        let rechecks: [TimeInterval] = [8, 12, 20, 30, 45, 60, 90]
+        func again(_ talk: TimeInterval, _ last: TimeInterval?, _ now: [String: String] = ["2": "Murali"],
+                   _ before: [String: String]? = ["2": "Murali"]) -> Bool {
+            VoiceMatcher.shouldCheckAgain(talk: talk, lastChecked: last, rechecks: rechecks,
+                                          named: VoiceMatcher.namedKeys(now),
+                                          namedAtLastCheck: before.map(VoiceMatcher.namedKeys))
+        }
+        XCTAssertTrue(again(5, nil), "never checked")
+        XCTAssertTrue(again(8, 5), "the next recheck")
+        XCTAssertFalse(again(10, 8), "between rechecks, nothing changed")
+        XCTAssertFalse(again(400, 90), "rechecks have run out and nothing changed")
+        // Jonny's 9 November call: "Ann" was already (wrongly) on voice 2#2 when
+        // Ann's split-off voice 1#3 was named Ann; her other voice must be checked again.
+        XCTAssertTrue(again(300, 90, ["2": "Murali", "2#2": "Ann", "1#3": "Ann"], ["2": "Murali", "2#2": "Ann"]),
+                      "a second voice given a name already on the call")
+        XCTAssertTrue(again(300, 90, ["2": "Murali", "4": "Ann"], ["2": "Murali", "4": "Jordan"]), "renamed")
+        XCTAssertTrue(again(300, 90, ["2": "Murali"], ["2": "Murali", "4": "Jordan"]), "undone")
+        XCTAssertTrue(again(300, 90, ["2": "MURALI"], ["2": "Murali"]) == false, "same name, other case")
+        XCTAssertFalse(again(300, .infinity, ["1#3": "Ann"], [:]), "you said who it isn't: never guess")
+        XCTAssertTrue(again(300, 90, ["2": "Murali"], nil), "no record of the names at its last check")
+    }
+
+    func testANameOnTwoVoicesThatSoundNothingAlikeIsAMixUp() {
+        let ann: [Float] = [1, 0, 0], annAgain: [Float] = [0.95, 0.31, 0], murali: [Float] = [-0.1, 1, 0]
+        XCTAssertEqual(VoiceMatcher.conflictingNames([("Ann", ann), ("Ann", murali), ("Murali", murali)]), ["ann"])
+        XCTAssertEqual(VoiceMatcher.conflictingNames([("Ann", ann), ("ann", annAgain), ("Murali", murali)]), [])
+        XCTAssertEqual(VoiceMatcher.conflictingNames([]), [])
+    }
+
     func testSpeechAcrossAGapIsCutInTwo() {
         let gaps = [EngineClock.Gap(at: 20, extra: 4), EngineClock.Gap(at: 50, extra: 5)]
         func flat(_ p: [(start: TimeInterval, end: TimeInterval)]) -> [TimeInterval] { p.flatMap { [$0.start, $0.end] } }
