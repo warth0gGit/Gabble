@@ -376,32 +376,14 @@ struct CallsView: View {
             }
             Section("Watch these apps for calls") {
                 ForEach(AppState.defaultCallApps, id: \.self) { app in
-                    HStack {
-                        Toggle(app, isOn: Binding(
-                            get: { appState.callApps.contains(app) },
-                            set: { on in
-                                if on { appState.callApps.append(app) } else { appState.callApps.removeAll { $0 == app } }
-                            }
-                        ))
-                        if appState.callApps.contains(app) {
-                            Spacer()
-                            Picker("", selection: Binding(
-                                get: { appState.autoStartCallApps.contains(app) },
-                                set: { auto in
-                                    appState.autoStartCallApps.removeAll { $0 == app }
-                                    if auto { appState.autoStartCallApps.append(app) }
-                                }
-                            )) {
-                                Text("Ask first").tag(false)
-                                Text("Start on its own").tag(true)
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .fixedSize()
+                    Toggle(app, isOn: Binding(
+                        get: { appState.callApps.contains(app) },
+                        set: { on in
+                            if on { appState.callApps.append(app) } else { appState.callApps.removeAll { $0 == app } }
                         }
-                    }
+                    ))
                 }
-                Text("\"Start on its own\" begins transcribing as soon as that app's call starts, without asking (it still works with the question above switched off). Google Meet is detected when your web browser uses the microphone. For FaceTime, Warble records everything your Mac plays during the call, because FaceTime's sound comes from macOS itself.")
+                Text("Google Meet is detected when your web browser uses the microphone. For FaceTime, Warble records everything your Mac plays during the call, because FaceTime's sound comes from macOS itself.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -188,13 +188,12 @@ final class CallController: ObservableObject {
         detector.onCallEnded = { [weak self] call in self?.callEnded(call) }
 
         appState.$callApps
-            .combineLatest(appState.$promptForCalls, appState.$autoStartCallApps)
+            .combineLatest(appState.$promptForCalls)
             .receive(on: RunLoop.main)
-            .sink { [weak self] apps, enabled, auto in
+            .sink { [weak self] apps, enabled in
                 guard let self else { return }
                 self.detector.enabledApps = apps
-                // Watch for calls if Warble asks about them, or starts any on its own.
-                if enabled || apps.contains(where: { auto.contains($0) }) { self.detector.start() } else { self.detector.stop() }
+                if enabled { self.detector.start() } else { self.detector.stop() }
             }
             .store(in: &cancellables)
 
@@ -238,16 +237,9 @@ final class CallController: ObservableObject {
             return
         }
         guard state == .idle || state == .saving || isSavedState else { return }
-        let startOnItsOwn = appState.autoStartCallApps.contains(call.app.name)
-        guard startOnItsOwn || appState.promptForCalls else { return }
         hideTask?.cancel()
         lastError = nil
         savingCall = nil
-        if startOnItsOwn {
-            pendingCall = nil
-            Task { await startRecording(app: call.app) }
-            return
-        }
         pendingCall = call
         state = .asking(appName: call.app.name)
     }
