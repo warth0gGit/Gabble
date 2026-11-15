@@ -19,7 +19,12 @@ struct VoiceSplitter {
     /// A voice's fingerprint is built from its first this-many seconds of speech, then fixed.
     static let anchorSeconds: TimeInterval = 8
     /// Within this (cosine distance) of a voice's fingerprint, it's that voice.
-    static let sameDistance: Float = 0.5
+    /// 0.55 (was 0.5) so it is never stricter than the join below: a voice
+    /// taken to be someone up to 0.55 away mustn't then be split off from
+    /// them again a few seconds later. On Jonny's real call the same person
+    /// was 0.36 or nearer 95% of the time and others 0.87 or further, and
+    /// replaying it at 0.55 changed nothing.
+    static let sameDistance: Float = 0.55
     /// This much speech in a row that sounds like nobody here makes a new voice.
     static let splitSeconds: TimeInterval = 4
     /// "The person talking now": their speech in the last this-many seconds.
@@ -35,11 +40,29 @@ struct VoiceSplitter {
     /// with speech under a wrong name within a point either way; about one
     /// in ten of these joins is to the wrong person, and the splitter or a
     /// chip click has to undo it.
-    static let sameAsEarlierDistance: Float = 0.45
-    static let sameAsEarlierMargin: Float = 0.1
-    /// A voice with this much talk is on show in the call panel (the same
-    /// 2 s the panel uses), so it is never quietly taken to be someone else.
-    static let onShowSeconds: TimeInterval = 2
+    /// Raised from 0.45 (margin 0.1) after Jonny, 15 November: "even if it's
+    /// only with 2 or 3 people, I am seeing a lot of new speakers, when it's
+    /// clearly not". On his real Teams call of 9 November the same person
+    /// was within 0.36 of their first seconds 95% of the time and other
+    /// people never nearer than 0.87, and replaying that call at 0.5 with a
+    /// 0.15 lead left no false new voices (one at 0.45), with no more speech
+    /// under a wrong name. The wider lead keeps a voice between two people
+    /// new, as before.
+    static let sameAsEarlierDistance: Float = 0.5
+    static let sameAsEarlierMargin: Float = 0.15
+    /// With only one person heard so far there's nobody to be "clearly
+    /// nearer" than, so the distance alone decides; on a one-to-one call a
+    /// new voice from the engine is nearly always that same person again
+    /// (other people were 0.87 or more away on Jonny's calls), so it may be
+    /// a little further off.
+    static let onlyPersonDistance: Float = 0.55
+    /// A voice with this much talk is on show in the call panel (the panel
+    /// uses this too), so it is never quietly taken to be someone else.
+    /// 3 s rather than 2: on Jonny's calls most false new voices said only
+    /// 1-2 s, in bits too short to judge, and showed up as a chip anyway.
+    /// The extra second gives them a clear stretch in which to be joined to
+    /// the person they really are before they ever appear.
+    static let onShowSeconds: TimeInterval = 3
     /// The names given so far (voice to name), if the controller passes
     /// them: then "clearly nearer" is judged person by person, so someone
     /// already heard as two voices still counts as one person.
@@ -195,7 +218,8 @@ struct VoiceSplitter {
             if distance < nearest[person]?.distance ?? .infinity { nearest[person] = (id, distance) }
         }
         let ranked = nearest.values.sorted { $0.distance < $1.distance }
-        guard let best = ranked.first, best.distance <= Self.sameAsEarlierDistance else { return nil }
+        let limit = ranked.count == 1 ? Self.onlyPersonDistance : Self.sameAsEarlierDistance
+        guard let best = ranked.first, best.distance <= limit else { return nil }
         if ranked.count > 1, ranked[1].distance - best.distance < Self.sameAsEarlierMargin { return nil }
         return best.id
     }

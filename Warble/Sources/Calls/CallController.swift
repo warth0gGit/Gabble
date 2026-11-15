@@ -448,7 +448,7 @@ final class CallController: ObservableObject {
                              conflicted: Set<String> = []) -> [LiveSpeaker] {
         let youTalking = meTalking && !(othersTalking && meLevel < meThreshold * 3)
         var list = [LiveSpeaker(id: "you", name: "You", isYou: true, isSpeaking: youTalking)]
-        // In the order each voice first had a chip (two seconds of talk), so a
+        // In the order each voice first had a chip (`VoiceSplitter.onShowSeconds` of talk), so a
         // new chip always goes at the end and never shifts the ones you aim at.
         var running: [String: TimeInterval] = [:]
         var order: [String] = []

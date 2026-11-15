@@ -66,8 +66,9 @@ final class VoiceSplitterTests: XCTestCase {
     func testAVoiceAlreadyOnShowIsLeftAsItIs() {
         var splitter = VoiceSplitter()
         splitter.add([say(jordan, 0, 3), say(jordan, 3, 6)])
-        splitter.add([say(jordan, 7, 8, engine: "S2"), say(jordan, 8, 9, engine: "S2"), say(jordan, 9, 12, engine: "S2")])
-        XCTAssertEqual(ids(splitter), ["S1", "S1", "S2", "S2", "S2"])
+        splitter.add([say(jordan, 7, 8, engine: "S2"), say(jordan, 8, 9, engine: "S2"), say(jordan, 9, 10, engine: "S2"),
+                      say(jordan, 10, 13, engine: "S2")])
+        XCTAssertEqual(ids(splitter), ["S1", "S1", "S2", "S2", "S2", "S2"])
     }
 
     /// The voice log keeps what the engine called each stretch, so a replay
@@ -114,6 +115,33 @@ final class VoiceSplitterTests: XCTestCase {
         splitter.add([say(aj, 20, 23)])                               // S1 is now hearing AJ
         splitter.add([say(jordan, 23, 24, engine: "S3")])            // a short bit from S3
         XCTAssertEqual(ids(splitter).suffix(3), ["S1", "S1#2", "S1"])
+    }
+
+    /// Jonny, 15 November: lots of "new speakers" on calls with only 2 or
+    /// 3 people. A new engine voice a bit off from the one person heard so
+    /// far is still them; someone clearly different is still new.
+    func testOnACallWithOnePersonANearbyNewVoiceIsThem() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(jordan, 3, 6)])
+        splitter.add([say([0.48, 0, 0.877, 0], 7, 10, engine: "S2")])   // 0.52 away
+        XCTAssertEqual(ids(splitter), ["S1", "S1", "S1"])
+        splitter.add([say([0.4, 0, 0, 0.917], 11, 14, engine: "S3")])    // 0.6 away
+        XCTAssertEqual(ids(splitter).last, "S3")
+    }
+
+    func testWithTwoPeopleANewVoiceClearlyNearerOneIsThem() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(aj, 3, 6, engine: "S2")])
+        splitter.add([say([0.52, 0, 0.854, 0], 7, 10, engine: "S3")])   // 0.48 from Jordan, 1 from AJ
+        XCTAssertEqual(ids(splitter), ["S1", "S2", "S1"])
+    }
+
+    /// A voice is only on show (and safe from being joined) after 3 s.
+    func testAShortBurstCanStillBeJoined() {
+        var splitter = VoiceSplitter()
+        splitter.add([say(jordan, 0, 3), say(jordan, 3, 6)])
+        splitter.add([say(jordan, 7, 8, engine: "S2"), say(jordan, 8, 9, engine: "S2"), say(jordan, 9, 12, engine: "S2")])
+        XCTAssertEqual(ids(splitter), ["S1", "S1", "S1", "S1", "S1"])
     }
 
     func testANewPersonStaysNew() {

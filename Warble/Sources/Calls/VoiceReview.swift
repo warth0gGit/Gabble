@@ -259,6 +259,7 @@ struct VoiceLog: Codable, Equatable {
             "splitterSameDistance": Double(VoiceSplitter.sameDistance),
             "sameAsEarlierDistance": Double(VoiceSplitter.sameAsEarlierDistance),
             "sameAsEarlierMargin": Double(VoiceSplitter.sameAsEarlierMargin),
+            "onlyPersonDistance": Double(VoiceSplitter.onlyPersonDistance),
         ]
     }
 
