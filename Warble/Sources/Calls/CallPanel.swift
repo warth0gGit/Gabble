@@ -218,7 +218,7 @@ struct CallPanelView: View {
     private func liveCard(appName: String) -> some View {
         HStack(spacing: 8) {
             PulsingDot()
-            Text("Transcribing \(shortName(appName)) call")
+            Text(appName == CallApp.manual.name ? "Transcribing" : "Transcribing \(shortName(appName)) call")
                 .font(.headline)
                 .lineLimit(1)
             Spacer(minLength: 4)

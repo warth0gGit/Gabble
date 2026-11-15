@@ -1,10 +1,19 @@
 import AppKit
 import CoreAudio
+import Darwin
 
 /// A call app that can be watched, with the bundle identifiers it runs under.
 struct CallApp: Equatable {
     var name: String
     var bundlePrefixes: [String]
+    /// Record everything this Mac plays rather than just this app's sound.
+    /// FaceTime's calls are played by a system service (avconferenced), not
+    /// by the FaceTime app, so its own sound is silent.
+    var capturesAllSound = false
+
+    /// A recording you started yourself from the menu bar, with no call app
+    /// in use: your microphone, plus whatever this Mac plays.
+    static let manual = CallApp(name: "Meeting", bundlePrefixes: [], capturesAllSound: true)
 
     static let all: [CallApp] = [
         CallApp(name: "Microsoft Teams", bundlePrefixes: ["com.microsoft.teams"]),
@@ -13,7 +22,12 @@ struct CallApp: Equatable {
                                                       "com.microsoft.edgemac", "org.mozilla.firefox", "com.brave.browser"]),
         CallApp(name: "Webex", bundlePrefixes: ["com.cisco.webex", "cisco-systems.spark", "com.webex."]),
         CallApp(name: "Slack", bundlePrefixes: ["com.tinyspeck.slackmacgap"]),
-        CallApp(name: "FaceTime", bundlePrefixes: ["com.apple.facetime"]),
+        // FaceTime (and iPhone calls on the Mac) take the microphone through
+        // avconferenced, which may report no bundle ID (then it's known by
+        // its process name).
+        CallApp(name: "FaceTime", bundlePrefixes: ["com.apple.facetime", "com.apple.avconferenced",
+                                                   "process:avconferenced"],
+                capturesAllSound: true),
     ]
 
     static func matching(bundleID: String, enabledNames: [String]) -> CallApp? {
@@ -116,11 +130,23 @@ final class CallDetector {
         guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else { return [] }
 
         return ids.compactMap { id in
-            guard uint32Property(id, kAudioProcessPropertyIsRunningInput) == 1,
-                  let bundleID = stringProperty(id, kAudioProcessPropertyBundleID), !bundleID.isEmpty else { return nil }
+            guard uint32Property(id, kAudioProcessPropertyIsRunningInput) == 1 else { return nil }
             let pid = pid_t(bitPattern: uint32Property(id, kAudioProcessPropertyPID) ?? 0)
+            var bundleID = stringProperty(id, kAudioProcessPropertyBundleID) ?? ""
+            // System services (like FaceTime's avconferenced) may have no
+            // bundle ID: go by their process name instead.
+            if bundleID.isEmpty, let name = processName(pid) { bundleID = "process:" + name.lowercased() }
+            guard !bundleID.isEmpty else { return nil }
             return MicUser(bundleID: bundleID, pid: pid)
         }
+    }
+
+    nonisolated private static func processName(_ pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        let path = String(cString: buffer)
+        return path.isEmpty ? nil : URL(fileURLWithPath: path).lastPathComponent
     }
 
     nonisolated private static func uint32Property(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32? {

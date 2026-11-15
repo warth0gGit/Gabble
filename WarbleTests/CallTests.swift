@@ -226,6 +226,34 @@ final class CallDetectorTests: XCTestCase {
         d.update(users: [zoom], now: t.addingTimeInterval(36))
         XCTAssertEqual(events(), ["start Microsoft Teams", "end Microsoft Teams", "start Zoom"])
     }
+
+    /// FaceTime takes the microphone through a macOS service, not the app.
+    func testFaceTimeCallsAreSeenThroughItsService() {
+        let (d, events) = detector()
+        d.enabledApps = ["FaceTime"]
+        d.update(users: [MicUser(bundleID: "process:avconferenced", pid: 300)], now: Date())
+        XCTAssertEqual(events(), ["start FaceTime"])
+        XCTAssertEqual(d.activeCall?.app.capturesAllSound, true)
+        XCTAssertEqual(CallApp.matching(bundleID: "com.apple.avconferenced", enabledNames: ["FaceTime"])?.name, "FaceTime")
+        XCTAssertNil(CallApp.matching(bundleID: "process:avconferenced", enabledNames: ["Zoom"]))
+    }
+
+    func testAMeetingYouStartedYourselfIsNamedAsOne() {
+        let t = CallTranscript(appName: CallApp.manual.name, started: Date())
+        XCTAssertTrue(t.title.hasPrefix("Meeting "))
+        XCTAssertFalse(t.title.contains("call"))
+    }
+}
+
+final class DictationKeyTests: XCTestCase {
+    func testAnotherKeySoonAfterIsAShortcut() {
+        XCTAssertTrue(HotkeyMonitor.isShortcut(otherKeyAt: 10.3, pressedAt: 10))
+        XCTAssertFalse(HotkeyMonitor.isShortcut(otherKeyAt: 14, pressedAt: 10), "by then you're talking")
+    }
+
+    func testEveryKeyHasItsOwnCode() {
+        XCTAssertEqual(Set(DictationKey.allCases.map(\.keyCode)).count, DictationKey.allCases.count)
+    }
 }
 
 @MainActor

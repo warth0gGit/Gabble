@@ -85,6 +85,7 @@ final class DictationController: ObservableObject {
 
         hotkey.onPress = { [weak self] time in self?.keyPressed(at: time) }
         hotkey.onRelease = { [weak self] time in self?.keyReleased(at: time) }
+        hotkey.onUsedInShortcut = { [weak self] in self?.keyUsedInShortcut() }
 
         appState.$dictationEnabled
             .combineLatest(appState.$dictationKey)
@@ -142,6 +143,17 @@ final class DictationController: ObservableObject {
         pressedEventTime = eventTime
         isHandsFree = false
         Task { await start(handsFree: false) }
+    }
+
+    /// The key was pressed for a shortcut (Shift-A, Control-C), not to
+    /// talk: drop the dictation that press started, so typing a capital
+    /// letter never sets Warble listening.
+    private func keyUsedInShortcut() {
+        // Once Warble has typed something, a key event may be its own typing.
+        guard pressedAt != nil, !isHandsFree, liveText.isEmpty else { return }
+        pressedAt = nil
+        pressedEventTime = nil
+        Task { await cancel() }
     }
 
     private func keyReleased(at eventTime: TimeInterval) {

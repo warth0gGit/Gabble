@@ -10,7 +10,24 @@ struct GeneralView: View {
         Form {
             Section {
                 Toggle("Dictation shortcut on", isOn: $appState.dictationEnabled)
-                Text("Hold the \(appState.dictationKey.displayName) to dictate into any app. You can also switch this on and off from the menu bar icon's right-click menu, or just click the icon to start and stop dictating.")
+                Picker("Dictation shortcut key", selection: $appState.dictationKey) {
+                    ForEach(DictationKey.allCases) { key in
+                        Text(key.displayName).tag(key)
+                    }
+                }
+                Text("Hold the \(appState.dictationKey.displayName) to dictate into any app, or tap it once to talk hands-free. You can also switch it on and off from the menu bar icon's right-click menu.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Clicking the menu bar icon", selection: $appState.menuBarClick) {
+                    ForEach(MenuBarClick.allCases) { choice in
+                        Text(choice.displayName).tag(choice)
+                    }
+                }
+                Text(appState.menuBarClick == .transcribe
+                     ? "Click the wave in the menu bar to start transcribing, and click again to stop and save. If a call app is in use, Warble transcribes that call; otherwise it records your microphone and whatever your Mac plays, for a meeting in the room or a call in an app Warble doesn't watch."
+                     : "Click the wave in the menu bar to start dictating, and click again to type what you said. To transcribe, right-click it and choose Start transcribing.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -359,14 +376,32 @@ struct CallsView: View {
             }
             Section("Watch these apps for calls") {
                 ForEach(AppState.defaultCallApps, id: \.self) { app in
-                    Toggle(app, isOn: Binding(
-                        get: { appState.callApps.contains(app) },
-                        set: { on in
-                            if on { appState.callApps.append(app) } else { appState.callApps.removeAll { $0 == app } }
+                    HStack {
+                        Toggle(app, isOn: Binding(
+                            get: { appState.callApps.contains(app) },
+                            set: { on in
+                                if on { appState.callApps.append(app) } else { appState.callApps.removeAll { $0 == app } }
+                            }
+                        ))
+                        if appState.callApps.contains(app) {
+                            Spacer()
+                            Picker("", selection: Binding(
+                                get: { appState.autoStartCallApps.contains(app) },
+                                set: { auto in
+                                    appState.autoStartCallApps.removeAll { $0 == app }
+                                    if auto { appState.autoStartCallApps.append(app) }
+                                }
+                            )) {
+                                Text("Ask first").tag(false)
+                                Text("Start on its own").tag(true)
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
                         }
-                    ))
+                    }
                 }
-                Text("Google Meet is detected when your web browser uses the microphone.")
+                Text("\"Start on its own\" begins transcribing as soon as that app's call starts, without asking (it still works with the question above switched off). Google Meet is detected when your web browser uses the microphone. For FaceTime, Warble records everything your Mac plays during the call, because FaceTime's sound comes from macOS itself.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

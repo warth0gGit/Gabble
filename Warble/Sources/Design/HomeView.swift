@@ -16,12 +16,21 @@ struct HomeView: View {
                     permissionsCard
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 14)], spacing: 14) {
-                    card(
-                        icon: "cursorarrow.click.2",
-                        title: "Click to dictate",
-                        text: "Click the W in the menu bar, speak, then click again. Your words are typed wherever your cursor is.",
-                        action: ("Try it", .dictation)
-                    )
+                    if appState.menuBarClick == .transcribe {
+                        card(
+                            icon: "cursorarrow.click.2",
+                            title: "Click to transcribe",
+                            text: "Click the W in the menu bar to transcribe a call or a meeting in the room, then click again to stop and save it.",
+                            action: ("Settings", .general)
+                        )
+                    } else {
+                        card(
+                            icon: "cursorarrow.click.2",
+                            title: "Click to dictate",
+                            text: "Click the W in the menu bar, speak, then click again. Your words are typed wherever your cursor is.",
+                            action: ("Try it", .dictation)
+                        )
+                    }
                     card(
                         icon: "keyboard",
                         title: "Or hold \(appState.dictationKey.displayName)",
@@ -41,7 +50,7 @@ struct HomeView: View {
                     card(
                         icon: "phone.bubble",
                         title: "Your calls",
-                        text: "Warble transcribes Teams, Zoom and Meet calls, names who spoke and files them. Find them all in Transcripts.",
+                        text: "Warble transcribes Teams, Zoom, Meet and FaceTime calls, names who spoke and files them. Find them all in Transcripts.",
                         action: ("Transcripts", .transcripts)
                     )
                 }

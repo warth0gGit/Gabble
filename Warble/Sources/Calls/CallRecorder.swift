@@ -68,7 +68,7 @@ final class CallRecorder {
                 speakers.append(buffer)
             }
         }
-        try await capture.start(bundlePrefixes: app.bundlePrefixes, appName: app.name)
+        try await capture.start(bundlePrefixes: app.bundlePrefixes, appName: app.name, allSound: app.capturesAllSound)
         systemCapture = capture
 
         // Voice recognition is a bonus: if its models can't load, the call is

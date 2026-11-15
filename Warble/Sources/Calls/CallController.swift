@@ -188,12 +188,13 @@ final class CallController: ObservableObject {
         detector.onCallEnded = { [weak self] call in self?.callEnded(call) }
 
         appState.$callApps
-            .combineLatest(appState.$promptForCalls)
+            .combineLatest(appState.$promptForCalls, appState.$autoStartCallApps)
             .receive(on: RunLoop.main)
-            .sink { [weak self] apps, enabled in
+            .sink { [weak self] apps, enabled, auto in
                 guard let self else { return }
                 self.detector.enabledApps = apps
-                if enabled { self.detector.start() } else { self.detector.stop() }
+                // Watch for calls if Warble asks about them, or starts any on its own.
+                if enabled || apps.contains(where: { auto.contains($0) }) { self.detector.start() } else { self.detector.stop() }
             }
             .store(in: &cancellables)
 
@@ -237,9 +238,16 @@ final class CallController: ObservableObject {
             return
         }
         guard state == .idle || state == .saving || isSavedState else { return }
+        let startOnItsOwn = appState.autoStartCallApps.contains(call.app.name)
+        guard startOnItsOwn || appState.promptForCalls else { return }
         hideTask?.cancel()
         lastError = nil
         savingCall = nil
+        if startOnItsOwn {
+            pendingCall = nil
+            Task { await startRecording(app: call.app) }
+            return
+        }
         pendingCall = call
         state = .asking(appName: call.app.name)
     }
@@ -247,6 +255,8 @@ final class CallController: ObservableObject {
     private func callEnded(_ call: CallDetector.ActiveCall) {
         switch state {
         case .recording:
+            // One you started yourself keeps going until you stop it.
+            guard callApp != CallApp.manual else { return }
             Task { await stopAndSave() }
         case .asking:
             pendingCall = nil
@@ -286,6 +296,24 @@ final class CallController: ObservableObject {
         guard !isRecording, let call = detector.activeCall else { return }
         pendingCall = nil
         Task { await startRecording(app: call.app) }
+    }
+
+    /// The menu bar icon's click: stop if Warble is transcribing; otherwise
+    /// transcribe the call being asked about or the call app in use, or, with
+    /// no call going, your microphone plus whatever this Mac plays (a meeting
+    /// in the room, or a call in an app Warble doesn't watch).
+    func toggleTranscribing() {
+        if isRecording {
+            stopRecording()
+        } else if case .asking = state, pendingCall != nil {
+            acceptPrompt()
+        } else if let call = detector.activeCall {
+            pendingCall = nil
+            Task { await startRecording(app: call.app) }
+        } else {
+            pendingCall = nil
+            Task { await startRecording(app: .manual) }
+        }
     }
 
     /// Whether "Transcribe this call" makes sense right now.

@@ -124,6 +124,8 @@ struct CallTranscript: Equatable {
         if let name = givenName {
             return "\(name), \(Self.titleFormatter.string(from: started))"
         }
+        // Started from the menu bar with no call app: just a meeting.
+        if appName == CallApp.manual.name { return "\(appName) \(Self.titleFormatter.string(from: started))" }
         return "\(shortAppName) call \(Self.titleFormatter.string(from: started))"
     }
 

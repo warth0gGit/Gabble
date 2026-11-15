@@ -2,7 +2,9 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// The menu bar icon. Click it to start dictating, click again to stop and type the text.
+/// The menu bar icon. Click it to start transcribing (a call, or a meeting
+/// in the room), click again to stop and save; or, if you choose in
+/// Settings, to start and stop dictating as before.
 /// Right-click (or Control-click) for a small menu with everything else.
 /// Clicking never brings Warble to the front, so the text goes to the app you were using.
 @MainActor
@@ -91,9 +93,12 @@ final class StatusItemController: NSObject {
         case .processing: tip = "Tidying up your words…"
         case .preparing(let message): tip = message
         case .idle:
-            tip = isTranscribingCall
-                ? "Transcribing this call. Right-click to stop."
-                : "Click to start dictating. Right-click for more."
+            if isTranscribingCall {
+                tip = clickTranscribes ? "Transcribing. Click to stop and save." : "Transcribing this call. Right-click to stop."
+            } else {
+                tip = clickTranscribes ? "Click to start transcribing. Right-click for more."
+                                       : "Click to start dictating. Right-click for more."
+            }
         }
         button.toolTip = tip
         let label = isListening ? "Warble, listening" : isTranscribingCall ? "Warble, transcribing a call" : "Warble"
@@ -102,13 +107,22 @@ final class StatusItemController: NSObject {
 
     // MARK: - Clicks
 
+    private var clickTranscribes: Bool { appState?.menuBarClick != .dictate }
+
     @objc private func buttonClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
             showMenu()
+        } else if clickTranscribes {
+            // While dictating, a click still finishes the dictation.
+            if dictation?.phase == .idle { calls?.toggleTranscribing() } else { dictation?.toggleHandsFree() }
         } else {
             dictation?.toggleHandsFree()
         }
+    }
+
+    @objc private func toggleDictation() {
+        dictation?.toggleHandsFree()
     }
 
     @objc private func toggleShortcut() {
@@ -120,9 +134,19 @@ final class StatusItemController: NSObject {
         permissions?.refresh()
         let menu = NSMenu()
 
-        let hint = NSMenuItem(title: "Click the wave to start or stop dictating", action: nil, keyEquivalent: "")
+        let hint = NSMenuItem(title: clickTranscribes ? "Click the wave to start or stop transcribing"
+                                                      : "Click the wave to start or stop dictating",
+                              action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
+
+        if clickTranscribes {
+            let dictate = NSMenuItem(title: dictation.phase == .idle ? "Start dictating" : "Stop dictating",
+                                     action: #selector(toggleDictation), keyEquivalent: "")
+            dictate.image = NSImage(systemSymbolName: "mic", accessibilityDescription: nil)
+            dictate.target = self
+            menu.addItem(dictate)
+        }
 
         let shortcut = NSMenuItem(title: "Hold the \(appState.dictationKey.displayName) to talk", action: #selector(toggleShortcut), keyEquivalent: "")
         shortcut.target = self
@@ -135,9 +159,10 @@ final class StatusItemController: NSObject {
             stop.image = NSImage(systemSymbolName: "stop.circle", accessibilityDescription: nil)
             stop.target = self
             menu.addItem(stop)
-        } else if calls?.canTranscribeActiveCall == true {
+        } else {
             menu.addItem(.separator())
-            let start = NSMenuItem(title: "Transcribe this call", action: #selector(startCall), keyEquivalent: "")
+            let title = calls?.canTranscribeActiveCall == true ? "Transcribe this call" : "Start transcribing"
+            let start = NSMenuItem(title: title, action: #selector(startCall), keyEquivalent: "")
             start.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)
             start.target = self
             menu.addItem(start)
@@ -185,7 +210,7 @@ final class StatusItemController: NSObject {
     }
 
     @objc private func startCall() {
-        calls?.transcribeActiveCall()
+        calls?.toggleTranscribing()
     }
 
     @objc private func copyLast() {

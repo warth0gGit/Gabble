@@ -99,6 +99,15 @@ final class AppState: ObservableObject {
     @Published var callApps: [String] {
         didSet { defaults.set(callApps, forKey: Keys.callApps) }
     }
+    /// Call apps whose calls Warble starts transcribing on its own, without
+    /// asking "Transcribe this call?" first. None by default.
+    @Published var autoStartCallApps: [String] {
+        didSet { defaults.set(autoStartCallApps, forKey: Keys.autoStartCallApps) }
+    }
+    /// What a plain click on the menu bar icon does.
+    @Published var menuBarClick: MenuBarClick {
+        didSet { defaults.set(menuBarClick.rawValue, forKey: Keys.menuBarClick) }
+    }
     @Published var masterFolderPath: String {
         didSet { defaults.set(masterFolderPath, forKey: Keys.masterFolderPath) }
     }
@@ -126,6 +135,8 @@ final class AppState: ObservableObject {
         sendAfterDictating = defaults.object(forKey: Keys.sendAfterDictating) as? Bool ?? false
         promptForCalls = defaults.object(forKey: Keys.promptForCalls) as? Bool ?? true
         callApps = defaults.stringArray(forKey: Keys.callApps) ?? Self.defaultCallApps
+        autoStartCallApps = defaults.stringArray(forKey: Keys.autoStartCallApps) ?? []
+        menuBarClick = MenuBarClick(rawValue: defaults.string(forKey: Keys.menuBarClick) ?? "") ?? .transcribe
         masterFolderPath = defaults.string(forKey: Keys.masterFolderPath) ?? Self.defaultMasterFolder
     }
 
@@ -155,6 +166,23 @@ final class AppState: ObservableObject {
         static let dictationKey = "dictationKey"
         static let promptForCalls = "promptForCalls"
         static let callApps = "callApps"
+        static let autoStartCallApps = "autoStartCallApps"
+        static let menuBarClick = "menuBarClick"
         static let masterFolderPath = "masterFolderPath"
+    }
+}
+
+/// What clicking the menu bar icon does. Jonny never used it to dictate
+/// (he holds the shortcut key), so by default it starts transcribing.
+enum MenuBarClick: String, CaseIterable, Identifiable {
+    case transcribe, dictate
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .transcribe: return "Start or stop transcribing"
+        case .dictate: return "Start or stop dictating"
+        }
     }
 }

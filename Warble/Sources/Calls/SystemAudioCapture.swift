@@ -29,16 +29,22 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
         self.onBuffer = onBuffer
     }
 
-    func start(bundlePrefixes: [String], appName: String) async throws {
+    /// - Parameter allSound: record everything this Mac plays (except
+    ///   Warble), not just the app's own sound.
+    func start(bundlePrefixes: [String], appName: String, allSound: Bool = false) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let display = content.displays.first else { throw SystemAudioError.noDisplay }
-        let apps = content.applications.filter { app in
-            let id = app.bundleIdentifier.lowercased()
-            return bundlePrefixes.contains { id.hasPrefix($0) }
+        let filter: SCContentFilter
+        if allSound {
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        } else {
+            let apps = content.applications.filter { app in
+                let id = app.bundleIdentifier.lowercased()
+                return bundlePrefixes.contains { id.hasPrefix($0) }
+            }
+            guard !apps.isEmpty else { throw SystemAudioError.appNotFound(appName) }
+            filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
         }
-        guard !apps.isEmpty else { throw SystemAudioError.appNotFound(appName) }
-
-        let filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.excludesCurrentProcessAudio = true
