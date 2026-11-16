@@ -249,6 +249,7 @@ final class CallController: ObservableObject {
         case .recording:
             // One you started yourself keeps going until you stop it.
             guard callApp != CallApp.manual else { return }
+            recorder?.log.note("\(call.app.name) let go of the microphone (\(call.bundleID)): saving")
             Task { await stopAndSave() }
         case .asking:
             pendingCall = nil
@@ -372,6 +373,9 @@ final class CallController: ObservableObject {
         if appState.recognitionModel == .parakeet {
             // Have Parakeet ready by the time the call ends.
             ParakeetStatus.shared.warmUp()
+        }
+        if let call = detector.activeCall, call.app == app {
+            recorder.log.note("detected through \(call.bundleID)")
         }
         do {
             try await recorder.start(hints: lexicon.recognitionHints)
