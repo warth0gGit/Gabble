@@ -1,4 +1,3 @@
-import AVFoundation
 import XCTest
 @testable import Warble
 
@@ -239,38 +238,10 @@ final class CallDetectorTests: XCTestCase {
         XCTAssertNil(CallApp.matching(bundleID: "process:avconferenced", enabledNames: ["Zoom"]))
     }
 
-    /// FaceTime's microphone moves between macOS services mid-call.
-    func testAFaceTimeCallLastsWhileAnythingHasTheMicrophone() {
-        let (d, events) = detector()
-        d.enabledApps = ["FaceTime"]
-        let t = Date()
-        d.update(users: [MicUser(bundleID: "com.apple.FaceTime", pid: 300)], now: t)
-        d.update(users: [MicUser(bundleID: "process:callservicesd", pid: 301)], now: t.addingTimeInterval(10))
-        d.update(users: [MicUser(bundleID: "process:callservicesd", pid: 301)], now: t.addingTimeInterval(20))
-        XCTAssertEqual(events(), ["start FaceTime"])
-        d.update(users: [], now: t.addingTimeInterval(21))
-        d.update(users: [], now: t.addingTimeInterval(27))
-        XCTAssertEqual(events(), ["start FaceTime", "end FaceTime"])
-    }
-
     func testAMeetingYouStartedYourselfIsNamedAsOne() {
         let t = CallTranscript(appName: CallApp.manual.name, started: Date())
         XCTAssertTrue(t.title.hasPrefix("Meeting "))
         XCTAssertFalse(t.title.contains("call"))
-    }
-}
-
-final class SystemAudioTapTests: XCTestCase {
-    func testStereoBecomesMono() throws {
-        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: false))
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 2))
-        buffer.frameLength = 2
-        buffer.floatChannelData![0][0] = 0.2; buffer.floatChannelData![1][0] = 0.4
-        buffer.floatChannelData![0][1] = -1; buffer.floatChannelData![1][1] = 1
-        let mono = try XCTUnwrap(SystemAudioTap.mono(buffer))
-        XCTAssertEqual(mono.format.channelCount, 1)
-        XCTAssertEqual(mono.floatChannelData![0][0], 0.3, accuracy: 0.0001)
-        XCTAssertEqual(mono.floatChannelData![0][1], 0, accuracy: 0.0001)
     }
 }
 

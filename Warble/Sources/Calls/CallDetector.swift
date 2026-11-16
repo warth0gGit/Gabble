@@ -10,9 +10,6 @@ struct CallApp: Equatable {
     /// FaceTime's calls are played by a system service (avconferenced), not
     /// by the FaceTime app, so its own sound is silent.
     var capturesAllSound = false
-    /// Hear the Mac's sound with a Core Audio tap rather than ScreenCaptureKit
-    /// (see SystemAudioTap), falling back to ScreenCaptureKit if it fails.
-    var prefersTap = false
 
     /// A recording you started yourself from the menu bar, with no call app
     /// in use: your microphone, plus whatever this Mac plays.
@@ -30,7 +27,7 @@ struct CallApp: Equatable {
         // its process name).
         CallApp(name: "FaceTime", bundlePrefixes: ["com.apple.facetime", "com.apple.avconferenced",
                                                    "process:avconferenced"],
-                capturesAllSound: true, prefersTap: true),
+                capturesAllSound: true),
     ]
 
     static func matching(bundleID: String, enabledNames: [String]) -> CallApp? {
@@ -100,11 +97,6 @@ final class CallDetector {
             if let same = matches.first(where: { $0.app == call.app }) {
                 // Still on the call (its audio process may have changed).
                 current = same
-                lastSeen = now
-            } else if call.app.capturesAllSound, !users.isEmpty {
-                // FaceTime's microphone moves between macOS services that
-                // aren't all recognisable as FaceTime: while anything still
-                // has the microphone, the call goes on.
                 lastSeen = now
             } else if let lastSeen, now.timeIntervalSince(lastSeen) > endGrace {
                 // The call app let go of the microphone: the call is over.

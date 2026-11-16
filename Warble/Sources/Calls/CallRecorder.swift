@@ -22,12 +22,6 @@ final class CallRecorder {
     private let micTranscriber = StreamTranscriber()
     private let callTranscriber = StreamTranscriber()
     private var systemCapture: SystemAudioCapture?
-    private var systemTap: SystemAudioTap?
-    /// How the call was heard, kept with the recording (call-log.txt).
-    let log: CallLog
-    /// Why the other side couldn't be heard, if it couldn't (the call is
-    /// then recorded from your microphone alone).
-    private(set) var othersProblem: String?
     private let micWriter: AudioFileWriter
     private let callWriter: AudioFileWriter
     private var liveMe = ""
@@ -43,7 +37,6 @@ final class CallRecorder {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         micWriter = AudioFileWriter(url: folder.appendingPathComponent("me.caf"))
         callWriter = AudioFileWriter(url: folder.appendingPathComponent("others.caf"))
-        log = CallLog(folder: folder)
         self.app = app
     }
 
@@ -64,11 +57,8 @@ final class CallRecorder {
         let callWriter = self.callWriter
         let speakers = self.speakers
         let othersMeter = self.othersMeter
-        let log = self.log
-        let others: @Sendable (AVAudioPCMBuffer, Bool) -> Void = { buffer, isGap in
-            let level = AudioReformatter.rms(of: buffer)
-            othersMeter.record(level: level)
-            log.heard("others", level: level)
+        let capture = SystemAudioCapture { buffer, isGap in
+            othersMeter.feed(buffer)
             callTranscriber.feed(buffer)
             callWriter.write(buffer)
             // The voice check gets the length of a gap, not its silence.
@@ -78,33 +68,8 @@ final class CallRecorder {
                 speakers.append(buffer)
             }
         }
-        log.note("\(app.name) call; Warble \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?")")
-        if app.prefersTap {
-            let tap = SystemAudioTap(onBuffer: others)
-            do {
-                try tap.start()
-                systemTap = tap
-                log.note("others: hearing all Mac sound with a Core Audio tap (\(tap.formatDescription))")
-            } catch {
-                log.note("others: tap failed: \(error.localizedDescription)")
-            }
-        }
-        if systemTap == nil {
-            let capture = SystemAudioCapture(onBuffer: others)
-            do {
-                try await capture.start(bundlePrefixes: app.bundlePrefixes, appName: app.name,
-                                        allSound: app.capturesAllSound)
-                systemCapture = capture
-                log.note("others: ScreenCaptureKit, " + (app.capturesAllSound ? "all Mac sound" : "\(app.name)'s sound"))
-            } catch {
-                log.note("others: ScreenCaptureKit failed: \(error.localizedDescription)")
-                // Without the permission nothing can be heard of the other side;
-                // otherwise record your side rather than nothing at all.
-                let text = error.localizedDescription.lowercased()
-                if text.contains("declined") || text.contains("not authorized") || text.contains("tcc") { throw error }
-                othersProblem = error.localizedDescription
-            }
-        }
+        try await capture.start(bundlePrefixes: app.bundlePrefixes, appName: app.name, allSound: app.capturesAllSound)
+        systemCapture = capture
 
         // Voice recognition is a bonus: if its models can't load, the call is
         // still transcribed as Me and Others.
@@ -115,26 +80,15 @@ final class CallRecorder {
         let micTranscriber = self.micTranscriber
         let micWriter = self.micWriter
         let meMeter = self.meMeter
-        do {
-            try await microphone.start(deviceUID: MicrophoneChoice.systemDefault) { buffer in
-                let level = AudioReformatter.rms(of: buffer)
-                meMeter.record(level: level)
-                log.heard("me", level: level)
-                micTranscriber.feed(buffer)
-                micWriter.write(buffer)
-            }
-            log.note("me: microphone started")
-        } catch {
-            log.note("me: microphone failed: \(error.localizedDescription)")
-            throw error
+        try await microphone.start(deviceUID: MicrophoneChoice.systemDefault) { buffer in
+            meMeter.feed(buffer)
+            micTranscriber.feed(buffer)
+            micWriter.write(buffer)
         }
     }
 
     func stop() async -> CallTranscript {
         microphone.stop()
-        log.note("stopped")
-        systemTap?.stop()
-        systemTap = nil
         let capture = systemCapture
         systemCapture = nil
         // Every step has a time limit, so finishing a call can never get stuck
